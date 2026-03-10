@@ -11,6 +11,7 @@ body {
 body {
   color: #f5f1e8;
   font-family: Georgia, "Times New Roman", serif;
+  background: #000;
 }
 
 canvas {

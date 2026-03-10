@@ -276,12 +276,12 @@ static inline CRGB* stripPtr(int s) {
 //static int8_t g_pxl8Pins[8] = { 8, 9, 10, 11, 12, 13, -1, -1 };
 
 // correct wiring:
-static int8_t g_pxl8Pins[8] = { 4, 5, 6, 7, 15, 16, -1, -1 };
+//static int8_t g_pxl8Pins[8] = { 4, 5, 6, 7, 15, 16, -1, -1 };
 
-// pusher street wiring:
+
 //static int8_t g_pxl8Pins[8] = { 4, 5, 16, 7, 15, 6, -1, -1 };
-
-//static int8_t g_pxl8Pins[8] = { 5, 4, 7, 16, 15, 6, -1, -1 };
+// pusher street wiring:
+static int8_t g_pxl8Pins[8] = { 5, 4, 7, 16, 15, 6, -1, -1 };
 
 // NeoPXL8 wants "LEDs per lane"
 //#define PXL8_COLOR_ORDER NEO_RGB
