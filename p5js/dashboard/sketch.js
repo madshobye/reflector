@@ -25,6 +25,7 @@ let automationEnabled = false;
 let automationBtn;
 let automationTimerId = null;
 let generationInProgress = false;
+let lastPromptText = "";
 
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
@@ -434,6 +435,7 @@ async function generateWrenchAndRun() {
 
     // Put code in editor
     editorTA.value(out.wrench_code);
+    lastPromptText = md;
 
     // Run now (do NOT store)
     publishJsonLine({ cmd: "run_now", code: out.wrench_code });
@@ -465,11 +467,19 @@ async function fetchDocMarkdown() {
   if (!res.ok) throw new Error("Doc fetch failed: HTTP " + res.status);
   let md = await res.text();
   md = await injectNewsIntoMarkdown(md);
+  md = injectLastPromptIntoMarkdown(md);
 
   // Optional safety: cap the amount to avoid huge prompts
   // (tweak as needed)
   const MAX_CHARS = 24000;
   return md.length > MAX_CHARS ? md.slice(0, MAX_CHARS) : md;
+}
+
+function injectLastPromptIntoMarkdown(md) {
+  if (!md) return md;
+
+  const placeholderRegex = /\\?\[last\\?_prompt\\?\]/i;
+  return md.replace(placeholderRegex, lastPromptText || "");
 }
 
 async function injectNewsIntoMarkdown(md) {
