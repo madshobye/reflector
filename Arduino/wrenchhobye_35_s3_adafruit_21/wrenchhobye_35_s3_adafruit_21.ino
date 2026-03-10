@@ -1,4 +1,14 @@
 #define ARDUINO_LOOP_STACK_SIZE 65536
+
+
+
+
+
+
+
+
+
+
 //#define ARDUINO_LOOP_STACK_SIZE 16384
 //#define MADSTESTER  // lille prototype board
 

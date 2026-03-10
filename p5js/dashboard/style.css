@@ -1,0 +1,24 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+
+  
+}
+
+body
+{
+
+  background:black;
+
+}
+canvas {
+  display: block;
+}
+
+
+html,
+body {
+ /* height: 100%;
+  overflow: hidden;*/
+}
