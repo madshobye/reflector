@@ -20,6 +20,11 @@ let autoFixInProgress = false;
 let autoFixBtn;
 let lastCompileErrText = "";
 let lastCompileErrMs = 0;
+const AUTOMATION_INTERVAL_MS = 3 * 60 * 1000;
+let automationEnabled = false;
+let automationBtn;
+let automationTimerId = null;
+let generationInProgress = false;
 
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
@@ -42,6 +47,7 @@ let isConnected = false;
 const PYR_ID = "reflector1"; // change if needed
 const MQTT_CMD_TOPIC = `/glow_dk_cph/${PYR_ID}/cmd`;
 const MQTT_EVT_TOPIC = `/glow_dk_cph/${PYR_ID}/evt`;
+const MQTT_REFLECTION_TOPIC = `/glow_dk_cph/${PYR_ID}/reflection`;
 
 // UI
 let statusP;
@@ -105,6 +111,11 @@ function setup() {
   genBtn = createButton("Ask ChatGPT → Generate Wrench (Run)");
   genBtn.mousePressed(generateWrenchAndRun);
   genBtn.attribute("disabled", "");
+  createSpan("  ");
+
+  automationBtn = createButton("Automation: OFF");
+  automationBtn.mousePressed(toggleAutomation);
+  automationBtn.attribute("disabled", "");
   createSpan("  ");
 
   autoFixBtn = createButton("Auto-fix: ON");
@@ -263,6 +274,7 @@ function setUiConnected(yes) {
     rebootBtn.removeAttribute("disabled");
 
     genBtn.removeAttribute("disabled"); // <-- add this
+    automationBtn.removeAttribute("disabled");
   } else {
     connectBtn.removeAttribute("disabled");
     disconnectBtn.attribute("disabled", "");
@@ -274,7 +286,54 @@ function setUiConnected(yes) {
     rebootBtn.attribute("disabled", "");
 
     genBtn.attribute("disabled", ""); // <-- add this
+    automationBtn.attribute("disabled", "");
+    clearAutomationTimer();
   }
+}
+
+function toggleAutomation() {
+  automationEnabled = !automationEnabled;
+  automationBtn.html(automationEnabled ? "Automation: ON" : "Automation: OFF");
+
+  if (!automationEnabled) {
+    clearAutomationTimer();
+    logLine("Automation is now OFF.");
+    return;
+  }
+
+  logLine("Automation is now ON. Starting generation now.");
+  if (generationInProgress) {
+    logLine("Automation start skipped: generation already in progress.");
+    scheduleNextAutomationRun();
+    return;
+  }
+
+  generateWrenchAndRun();
+}
+
+function clearAutomationTimer() {
+  if (automationTimerId !== null) {
+    clearTimeout(automationTimerId);
+    automationTimerId = null;
+  }
+}
+
+function scheduleNextAutomationRun() {
+  clearAutomationTimer();
+  if (!automationEnabled) return;
+
+  automationTimerId = setTimeout(() => {
+    automationTimerId = null;
+
+    if (!automationEnabled) return;
+    if (!client || !isConnected) {
+      logLine("Automation skipped: MQTT not connected.");
+      scheduleNextAutomationRun();
+      return;
+    }
+
+    generateWrenchAndRun();
+  }, AUTOMATION_INTERVAL_MS);
 }
 
 // ------------------------------------------------------------
@@ -291,6 +350,18 @@ function publishJsonLine(obj) {
   const payload = JSON.stringify(obj) + "\n";
   client.publish(MQTT_CMD_TOPIC, payload);
   logLine(">>> " + payload.trim());
+}
+
+function publishReflectionUpdate(description, code) {
+  if (!client || !isConnected) return;
+
+  const payload = JSON.stringify({
+    description: description || "",
+    code: code || "",
+    generated_at: new Date().toISOString()
+  });
+  client.publish(MQTT_REFLECTION_TOPIC, payload, { retain: true });
+  logLine("Published reflection update.");
 }
 
 function cmdGetCode() {
@@ -323,6 +394,10 @@ function cmdReboot() {
 // ------------------------------------------------------------
 
 async function generateWrenchAndRun() {
+  if (generationInProgress) {
+    logLine("Generation already in progress.");
+    return;
+  }
   if (!client || !isConnected) {
     alert("MQTT not connected.");
     return;
@@ -332,7 +407,9 @@ async function generateWrenchAndRun() {
     return;
   }
 
+  generationInProgress = true;
   genBtn.attribute("disabled", "");
+  automationBtn.attribute("disabled", "");
   logLine("Fetching design doc (md)…");
 
   try {
@@ -360,24 +437,255 @@ async function generateWrenchAndRun() {
 
     // Run now (do NOT store)
     publishJsonLine({ cmd: "run_now", code: out.wrench_code });
+    publishReflectionUpdate(out.description, out.wrench_code);
     logLine("✅ Sent run_now with generated code (" + out.wrench_code.length + " chars).");
+    if (automationEnabled) {
+      scheduleNextAutomationRun();
+      logLine(
+        "Automation rescheduled for " +
+          Math.round(AUTOMATION_INTERVAL_MS / 1000) +
+          " seconds from now."
+      );
+    }
   } catch (err) {
     logLine("❌ Generate failed: " + (err && err.message ? err.message : err));
+    if (automationEnabled) {
+      scheduleNextAutomationRun();
+    }
   } finally {
+    generationInProgress = false;
     // Re-enable if still connected
     if (client && isConnected) genBtn.removeAttribute("disabled");
+    if (client && isConnected) automationBtn.removeAttribute("disabled");
   }
 }
 
 async function fetchDocMarkdown() {
   const res = await fetch(DOC_MD_URL, { method: "GET" });
   if (!res.ok) throw new Error("Doc fetch failed: HTTP " + res.status);
-  const md = await res.text();
+  let md = await res.text();
+  md = await injectNewsIntoMarkdown(md);
 
   // Optional safety: cap the amount to avoid huge prompts
   // (tweak as needed)
   const MAX_CHARS = 24000;
   return md.length > MAX_CHARS ? md.slice(0, MAX_CHARS) : md;
+}
+
+async function injectNewsIntoMarkdown(md) {
+  if (!md) return md;
+
+  const markerRegex = /\[news_start\][\s\S]*?\[news_end\]/i;
+  const placeholderRegex = /\\?\[news\\?\]/i;
+  const feeds = extractNewsFeedUrls(md);
+  if (!feeds.length) {
+    logLine("News debug: no feed URLs found between [news_start] and [news_end].");
+    debugNewsMarkerContext(md);
+    return md.replace(markerRegex, "").replace(placeholderRegex, "");
+  }
+
+  logLine("News debug: found " + feeds.length + " feed source(s).");
+  const sections = [];
+  let successCount = 0;
+  for (const feedUrl of feeds) {
+    logLine("News debug: fetching " + feedUrl);
+    try {
+      const feedXml = await fetchFeedText(feedUrl);
+      const items = parseRssItems(feedXml, 10);
+      if (!items.length) {
+        logLine("News debug [" + feedUrl + "]: no items found.");
+        sections.push("## " + feedUrl + "\nNo items found.");
+        continue;
+      }
+
+      logLine(
+        "News debug [" + feedUrl + "]: parsed " + items.length + " items."
+      );
+      logLine(
+        "News debug [" +
+          feedUrl +
+          "]: " +
+          items[0].title +
+          " | " +
+          items[0].description
+      );
+
+      const lines = ["## " + feedUrl];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        lines.push(
+          `${i + 1}. ${item.title}\n${item.description}`
+        );
+      }
+      sections.push(lines.join("\n\n"));
+      successCount++;
+    } catch (err) {
+      sections.push(
+        "## " +
+          feedUrl +
+          "\nFailed to load feed: " +
+          (err && err.message ? err.message : err)
+      );
+      logLine(
+        "News debug [" +
+          feedUrl +
+          "]: failed to load feed: " +
+          (err && err.message ? err.message : err)
+      );
+    }
+  }
+
+  if (successCount === 0) {
+    throw new Error("No news feeds could be loaded. Skipping ChatGPT generation.");
+  }
+
+  const newsBlock = "# News\n\n" + sections.join("\n\n");
+  return md.replace(markerRegex, "").replace(placeholderRegex, newsBlock);
+}
+
+function extractNewsFeedUrls(md) {
+  const block = extractNewsMarkerBlock(md);
+  if (!block) return [];
+
+  return block
+    .split("\n")
+    .map((line) => extractUrlFromMarkdownLine(line))
+    .filter((line) => line && /^https?:\/\//i.test(line));
+}
+
+function extractNewsMarkerBlock(md) {
+  if (!md) return "";
+
+  const exactMatch = md.match(/\\?\[news\\?_start\\?\]([\s\S]*?)\\?\[news\\?_end\\?\]/i);
+  if (exactMatch) return exactMatch[1];
+
+  const normalized = md.toLowerCase().replace(/\\_/g, "_");
+  const startToken = "[news_start]";
+  const endToken = "[news_end]";
+  const startIdx = normalized.indexOf(startToken);
+  const endIdx = normalized.indexOf(endToken);
+
+  if (startIdx >= 0 && endIdx > startIdx) {
+    return md.slice(startIdx + startToken.length, endIdx);
+  }
+
+  return "";
+}
+
+function extractUrlFromMarkdownLine(line) {
+  const trimmed = (line || "").trim();
+  if (!trimmed) return "";
+
+  const markdownLinkMatch = trimmed.match(/\[[^\]]*\]\((https?:\/\/[^)]+)\)/i);
+  if (markdownLinkMatch) return markdownLinkMatch[1].trim();
+
+  const plainUrlMatch = trimmed.match(/https?:\/\/\S+/i);
+  return plainUrlMatch ? plainUrlMatch[0].trim() : "";
+}
+
+function debugNewsMarkerContext(md) {
+  if (!md) {
+    logLine("News debug: markdown is empty.");
+    return;
+  }
+
+  const normalized = md.toLowerCase();
+  const newsIdx = normalized.indexOf("news");
+  if (newsIdx < 0) {
+    logLine("News debug: no 'news' substring found in markdown.");
+    return;
+  }
+
+  const start = Math.max(0, newsIdx - 180);
+  const end = Math.min(md.length, newsIdx + 420);
+  const snippet = md.slice(start, end).replace(/\s+/g, " ").trim();
+  logLine("News debug context: " + snippet);
+}
+
+async function fetchFeedText(url) {
+  const attempts = [
+    {
+      label: "allorigins-get",
+      requestUrl: "https://api.allorigins.win/get?url=" + encodeURIComponent(url),
+      parse: async (res) => {
+        const data = await res.json();
+        return data && data.contents ? data.contents : "";
+      }
+    },
+    {
+      label: "corsproxy",
+      requestUrl: "https://corsproxy.io/?" + encodeURIComponent(url),
+      parse: async (res) => await res.text()
+    },
+    {
+      label: "allorigins-raw",
+      requestUrl: "https://api.allorigins.win/raw?url=" + encodeURIComponent(url),
+      parse: async (res) => await res.text()
+    }
+  ];
+
+  let lastErr = null;
+  for (const attempt of attempts) {
+    logLine("News debug: trying " + attempt.label + " for " + url);
+    try {
+      const res = await fetch(attempt.requestUrl, { method: "GET" });
+      if (!res.ok) {
+        throw new Error("HTTP " + res.status);
+      }
+
+      const text = await attempt.parse(res);
+      if (!text) {
+        throw new Error("Empty response");
+      }
+
+      logLine("News debug: fetch success via " + attempt.label + " for " + url);
+      return text;
+    } catch (err) {
+      lastErr = err;
+      logLine(
+        "News debug: " +
+          attempt.label +
+          " failed for " +
+          url +
+          ": " +
+          (err && err.message ? err.message : err)
+      );
+    }
+  }
+
+  throw lastErr || new Error("Feed fetch failed");
+}
+
+function parseRssItems(xmlText, maxItems) {
+  if (!xmlText) return [];
+
+  const parser = new DOMParser();
+  const xml = parser.parseFromString(xmlText, "text/xml");
+  const parseError = xml.querySelector("parsererror");
+  if (parseError) {
+    throw new Error("RSS parse failed");
+  }
+
+  const items = Array.from(xml.querySelectorAll("item")).slice(0, maxItems);
+  return items.map((item) => ({
+    title: cleanNewsText(getXmlNodeText(item, "title") || "Untitled"),
+    description: cleanNewsText(
+      getXmlNodeText(item, "description") || "No description."
+    )
+  }));
+}
+
+function getXmlNodeText(parent, tagName) {
+  const node = parent.querySelector(tagName);
+  return node ? node.textContent : "";
+}
+
+function cleanNewsText(text) {
+  const div = document.createElement("div");
+  div.innerHTML = text || "";
+  return (div.textContent || div.innerText || "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function openaiGenerateWrenchFromDoc(docMd) {
@@ -741,4 +1049,3 @@ async function openaiFixWrenchFromError(brokenCode, errText) {
 
   return parsed;
 }
-
