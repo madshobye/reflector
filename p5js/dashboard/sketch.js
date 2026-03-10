@@ -33,6 +33,7 @@ let apiKeyEncryptedGpt =
   "U2FsdGVkX18ufo+Jv5eV1uiVVu23Jjvr8SaHfqG2rnsUq75hmr1av/B4KStyhTJtJwMgyyM6CP9gKXuUEu8F2m52Ey+wyLSiuI34pcMYOnPOVrngAAE3EMJg1Sx52sdns3JzqQHJgma6chold+TcfgeYqG/4O8wdRiKLz64Ic+v9uB+xDrzxJ2Cazu4En9yWPTKskgvccEn3ls0+zVGacW1zLaNyJXmzm+yHE0mkro+a/5lWzZFRT6UX6+HVEgqi";
 
  let mqttKeyEncrypted ="U2FsdGVkX1+f60bzOgPSBUTFJpFtLdWNgjs5QTNiW9BsDukPIRX8VtphcNDQ/bqS"
+ // let mqttKeyEncrypted =""
   let mqttKey =""
 let genBtn;
 let client = null;
@@ -57,7 +58,15 @@ function setup() {
   createCanvas(1000, 60);
   noLoop();
   textFont("monospace");
-
+  // Load OpenAI key (you said you have helpers; keep this shape)
+  // Example: OPENAI_API_KEY = storedDecrypt({ apiKeyEncryptedGpt });
+  try {
+    OPENAI_API_KEY = storedDecrypt({ apiKeyEncryptedGpt });
+     mqttKey = storedDecrypt({ mqttKeyEncrypted });
+  } catch (e) {
+    // It’s ok if you wire this later
+    logLine("OpenAI key not loaded yet (wire storedDecrypt + apiKeyEncryptedGpt).");
+  }
   statusP = createP("Status: MQTT not connected");
   statusP.style("margin", "8px 0 6px 0");
 
@@ -89,15 +98,7 @@ function setup() {
   rebootBtn = createButton("Reboot");
   rebootBtn.mousePressed(cmdReboot);
   rebootBtn.attribute("disabled", "");
-  // Load OpenAI key (you said you have helpers; keep this shape)
-  // Example: OPENAI_API_KEY = storedDecrypt({ apiKeyEncryptedGpt });
-  try {
-    OPENAI_API_KEY = storedDecrypt({ apiKeyEncryptedGpt });
-     mqttKey = storedDecrypt({ mqttKeyEncrypted });
-  } catch (e) {
-    // It’s ok if you wire this later
-    logLine("OpenAI key not loaded yet (wire storedDecrypt + apiKeyEncryptedGpt).");
-  }
+ 
 
   createSpan("  ");
 
@@ -190,7 +191,7 @@ function connectMQTT() {
 
   logLine("Connecting MQTT as " + clientId + "...");
 
-  client = mqtt.connect("wss://reflector:pdR1tOQZ3Y0TR2iC@reflector.cloud.shiftr.io", {
+  client = mqtt.connect("wss://reflector:" +mqttKey + "@reflector.cloud.shiftr.io", {
     clientId,
     keepalive: 20,
     reconnectPeriod: 1000,
