@@ -17,7 +17,8 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v28";
+const DASHBOARD2_VERSION = "v32";
+const NEWS_ITEMS_PER_FEED = 20;
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -679,7 +680,7 @@ function rememberPromptReflection(text) {
   const next = String(text || "").trim();
   if (!next) return;
   if (lastPromptHistory[0] === next) return;
-  lastPromptHistory = [next, ...lastPromptHistory.filter((item) => item !== next)].slice(0, 5);
+  lastPromptHistory = [next, ...lastPromptHistory.filter((item) => item !== next)].slice(0, 10);
 }
 
 function lastPromptHistoryText() {
@@ -1667,6 +1668,7 @@ async function fetchDocMarkdown() {
   md = await injectNewsIntoMarkdown(md);
   md = injectLastPromptIntoMarkdown(md);
   md = injectReflectorIdIntoMarkdown(md);
+  md = injectCurrentTimeDateIntoMarkdown(md);
   const MAX_CHARS = 24000;
   return md.length > MAX_CHARS ? md.slice(0, MAX_CHARS) : md;
 }
@@ -1681,6 +1683,28 @@ function injectReflectorIdIntoMarkdown(md) {
   if (!md) return md;
   const placeholderRegex = /\\?\[reflectorid\\?\]/gi;
   return md.replace(placeholderRegex, selectedPyrId || "reflector1");
+}
+
+function injectCurrentTimeDateIntoMarkdown(md) {
+  if (!md) return md;
+  const placeholderRegex = /\\?\[current\\?_time\\?_date\\?\]/gi;
+  return md.replace(placeholderRegex, currentTimeDateString());
+}
+
+function currentTimeDateString() {
+  try {
+    return new Date().toLocaleString("en-GB", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      timeZoneName: "short"
+    });
+  } catch (_) {
+    return new Date().toString();
+  }
 }
 
 async function injectNewsIntoMarkdown(md) {
@@ -1699,7 +1723,7 @@ async function injectNewsIntoMarkdown(md) {
     logLine("News debug: fetching " + feedUrl);
     try {
       const feedXml = await fetchFeedText(feedUrl);
-      const items = parseRssItems(feedXml, 10);
+      const items = parseRssItems(feedXml, NEWS_ITEMS_PER_FEED);
       if (!items.length) continue;
       logLine("News debug [" + feedUrl + "]: " + items[0].title + " | " + items[0].description);
       const lines = ["## " + feedUrl];
