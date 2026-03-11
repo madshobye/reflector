@@ -17,7 +17,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v27";
+const DASHBOARD2_VERSION = "v28";
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -3231,7 +3231,7 @@ class WrenchPreviewRuntime {
 
   tube_lerp(tube, t01, which) {
     const pair = PREVIEW_TUBE_ENDPOINTS[clampIndex(tube, 6)] || PREVIEW_TUBE_ENDPOINTS[0];
-    const t = Math.max(0, Math.min(1, Number(t01) || 0));
+    const t = normalizePreviewTubeT(tube, t01);
     const p = {
       x: pair[0].x + (pair[1].x - pair[0].x) * t,
       y: pair[0].y + (pair[1].y - pair[0].y) * t,
@@ -3578,6 +3578,11 @@ function rgbToHex(c) {
 
 function clampIndex(v, max) {
   return Math.max(0, Math.min(max - 1, Math.floor(Number(v) || 0)));
+}
+
+function normalizePreviewTubeT(tube, t01) {
+  const t = Math.max(0, Math.min(1, Number(t01) || 0));
+  return Number(tube) === 4 ? 1 - t : t;
 }
 
 function lerpVec3(a, b, t) {
