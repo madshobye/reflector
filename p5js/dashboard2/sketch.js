@@ -17,7 +17,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v22";
+const DASHBOARD2_VERSION = "v24";
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -107,6 +107,7 @@ async function setup() {
   automationIntervalMinutes = loadAutomationIntervalMinutes();
   selectedGptModel = loadSelectedGptModel();
   selectedPyrId = loadSelectedPyrId();
+  syncReflectorUrl();
   createLayout();
   initializeAuthState();
 
@@ -246,6 +247,7 @@ function createSidebarControls() {
     const prevId = selectedPyrId;
     selectedPyrId = nextId;
     persistSelectedPyrId();
+    syncReflectorUrl();
     logLine("Reflector target: " + selectedPyrId);
     logLine("cmd: " + mqttCmdTopic());
     logLine("evt: " + mqttEvtTopic());
@@ -456,6 +458,11 @@ function persistSelectedGptModel() {
 
 function loadSelectedPyrId() {
   try {
+    const url = new URL(window.location.href);
+    const fromUrl = url.searchParams.get("id");
+    if (fromUrl && PYR_ID_OPTIONS.includes(fromUrl)) return fromUrl;
+  } catch (_) {}
+  try {
     const saved = window.localStorage.getItem(PYR_ID_KEY);
     if (saved && PYR_ID_OPTIONS.includes(saved)) return saved;
   } catch (_) {}
@@ -465,6 +472,14 @@ function loadSelectedPyrId() {
 function persistSelectedPyrId() {
   try {
     window.localStorage.setItem(PYR_ID_KEY, selectedPyrId);
+  } catch (_) {}
+}
+
+function syncReflectorUrl() {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set("id", selectedPyrId || "reflector1");
+    window.history.replaceState({}, "", url.toString());
   } catch (_) {}
 }
 
@@ -2662,16 +2677,21 @@ class WrenchPreview3D {
     for (let i = 0; i < glowAnchors.length; i++) {
       const src = glowColors[i] || { r: 0, g: 0, b: 0 };
       const anchor = glowAnchors[i];
-      const alpha = Math.max(src.r, src.g, src.b) * 0.085;
+      const alpha = Math.max(src.r, src.g, src.b) * 0.2;
       if (alpha <= 1) continue;
       const projected = projectPointToPlane(anchor, shiftedCenter, u, v);
       const baseW = 180 + i * 28;
       const baseH = 90 + i * 18;
-      for (let layer = 9; layer >= 0; layer--) {
-        const layerScale = 1.5 + layer * 0.5;
-        const layerAlpha = alpha * (0.34 - layer * 0.024);
+      for (let layer = 11; layer >= 0; layer--) {
+        const layerScale = 1.35 + layer * 0.42;
+        const layerAlpha = alpha * (0.42 - layer * 0.022);
         if (layerAlpha <= 1) continue;
-        p.fill(src.r, src.g, src.b, layerAlpha);
+        p.fill(
+          Math.min(255, src.r * 1.08),
+          Math.min(255, src.g * 1.08),
+          Math.min(255, src.b * 1.08),
+          layerAlpha
+        );
         p.beginShape();
         for (let j = 0; j < 28; j++) {
           const ang = (j / 28) * Math.PI * 2;
