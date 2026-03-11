@@ -15,6 +15,7 @@ const DEFAULT_GPT_MODEL = "gpt-5.1-codex";
 const ORBIT_STORAGE_VERSION = "v2";
 const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
+const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -33,6 +34,8 @@ let lastCompileErrText = "";
 let lastCompileErrMs = 0;
 let selectedGptModel = DEFAULT_GPT_MODEL;
 let selectedPyrId = "reflector1";
+let isAuthenticated = false;
+const dashboardInstanceId = "dashboard2-" + Math.floor(Math.random() * 1e9) + "-" + Date.now();
 
 let OPENAI_API_KEY = "";
 let mqttKey = "";
@@ -80,6 +83,7 @@ let sidebarStatusDiv = null;
 let sidebarIntervalDiv = null;
 let sidebarModelSelect = null;
 let sidebarPyrSelect = null;
+let sidebarAuthButton = null;
 let sidebarButtons = {};
 let sidebarSyncTimer = null;
 
@@ -90,13 +94,7 @@ async function setup() {
   selectedGptModel = loadSelectedGptModel();
   selectedPyrId = loadSelectedPyrId();
   createLayout();
-
-  try {
-    OPENAI_API_KEY = storedDecrypt({ apiKeyEncryptedGpt });
-    mqttKey = storedDecrypt({ mqttKeyEncrypted });
-  } catch (e) {
-    statusText = "Missing encrypted key/password";
-  }
+  initializeAuthState();
 
   createSidebarControls();
   createDomPanels();
@@ -107,6 +105,7 @@ async function setup() {
   logLine("Ready.");
   logLine("cmd: " + mqttCmdTopic());
   logLine("evt: " + mqttEvtTopic());
+  logLine(isAuthenticated ? "Authenticated mode." : "Read-only mode.");
   renderMetrics();
   applyDisplayMode();
   updateDomLayout();
@@ -175,6 +174,7 @@ function createSidebarControls() {
     }],
     ["automationInterval", automationIntervalLabel(), () => cycleAutomationInterval()],
     ["automation", "Automation: OFF", () => toggleAutomation()],
+    ["stopAllAuto", "Stop All Auto", () => stopAllAutomationEverywhere()],
     ["insertExample", "Insert Example", () => {
       setEditorValue(defaultWrenchExample());
       refreshPreview();
@@ -191,6 +191,14 @@ function createSidebarControls() {
     btn.mousePressed(handler);
     sidebarButtons[key] = btn;
   }
+
+  sidebarAuthButton = createButton(isAuthenticated ? "Log Out" : "Log In");
+  sidebarAuthButton.parent(wrap);
+  sidebarAuthButton.class("sidebar-button");
+  sidebarAuthButton.mousePressed(() => {
+    if (isAuthenticated) logoutAuthenticatedMode();
+    else loginAuthenticatedMode();
+  });
 
   sidebarPyrSelect = createSelect();
   sidebarPyrSelect.parent(wrap);
@@ -211,7 +219,7 @@ function createSidebarControls() {
     resetSelectedReflectorState();
     if (client && isConnected) {
       resubscribeReflectorTopics(prevId, selectedPyrId);
-      requestSelectedReflectorCode();
+      if (isAuthenticated) requestSelectedReflectorCode();
     }
     syncSidebarControls();
   });
@@ -251,17 +259,26 @@ function syncSidebarControls() {
     disabled: false,
     tone: client ? "mid" : "mid"
   });
-  updateSidebarButton("getCode", { disabled: !isConnected, tone: isConnected ? "mid" : "off" });
-  updateSidebarButton("runNow", { disabled: !isConnected, tone: isConnected ? "mid" : "off" });
-  updateSidebarButton("storeOnly", { disabled: !isConnected, tone: isConnected ? "mid" : "off" });
-  updateSidebarButton("runStore", { disabled: !isConnected, tone: isConnected ? "mid" : "off" });
-  updateSidebarButton("reboot", { disabled: !isConnected, tone: isConnected ? "low" : "off" });
-  updateSidebarButton("generate", { disabled: !isConnected || generationInProgress, tone: isConnected && !generationInProgress ? "mid" : "off" });
-  updateSidebarButton("autoFix", { label: autoFixEnabled ? "Auto-fix: ON" : "Auto-fix: OFF", disabled: false, tone: autoFixEnabled ? "high" : "off" });
-  updateSidebarButton("automationInterval", { label: automationIntervalLabel(), disabled: false, tone: automationIntervalMinutes === 0 ? "high" : "low" });
-  updateSidebarButton("automation", { label: automationEnabled ? "Automation: ON" : "Automation: OFF", disabled: !isConnected || generationInProgress, tone: automationEnabled ? "high" : (!isConnected || generationInProgress ? "off" : "off") });
+  updateSidebarButton("getCode", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "mid" : "off" });
+  updateSidebarButton("runNow", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "mid" : "off" });
+  updateSidebarButton("storeOnly", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "mid" : "off" });
+  updateSidebarButton("runStore", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "mid" : "off" });
+  updateSidebarButton("reboot", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "low" : "off" });
+  updateSidebarButton("generate", { disabled: !isConnected || generationInProgress || !isAuthenticated, tone: isConnected && !generationInProgress && isAuthenticated ? "mid" : "off" });
+  updateSidebarButton("autoFix", { label: autoFixEnabled ? "Auto-fix: ON" : "Auto-fix: OFF", disabled: !isAuthenticated, tone: autoFixEnabled && isAuthenticated ? "high" : "off" });
+  updateSidebarButton("automationInterval", { label: automationIntervalLabel(), disabled: !isAuthenticated, tone: automationIntervalMinutes === 0 && isAuthenticated ? "high" : (isAuthenticated ? "low" : "off") });
+  updateSidebarButton("automation", { label: automationEnabled ? "Automation: ON" : "Automation: OFF", disabled: !isConnected || generationInProgress || !isAuthenticated, tone: automationEnabled && isAuthenticated ? "high" : "off" });
+  updateSidebarButton("stopAllAuto", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "low" : "off" });
   updateSidebarButton("insertExample", { disabled: false, tone: "low" });
   updateSidebarButton("clearConsole", { disabled: false, tone: "low" });
+  if (sidebarAuthButton) {
+    sidebarAuthButton.html(isAuthenticated ? "Log Out" : "Log In");
+    sidebarAuthButton.removeClass("tone-high");
+    sidebarAuthButton.removeClass("tone-mid");
+    sidebarAuthButton.removeClass("tone-low");
+    sidebarAuthButton.removeClass("tone-off");
+    sidebarAuthButton.addClass(isAuthenticated ? "tone-mid" : "tone-low");
+  }
   if (sidebarPyrSelect) {
     sidebarPyrSelect.value(selectedPyrId);
     sidebarPyrSelect.removeClass("tone-high");
@@ -276,11 +293,17 @@ function syncSidebarControls() {
     sidebarModelSelect.removeClass("tone-mid");
     sidebarModelSelect.removeClass("tone-low");
     sidebarModelSelect.removeClass("tone-off");
-    sidebarModelSelect.addClass(isConnected ? "tone-mid" : "tone-low");
+    sidebarModelSelect.addClass(isAuthenticated ? (isConnected ? "tone-mid" : "tone-low") : "tone-off");
+    sidebarModelSelect.style("display", isAuthenticated ? "block" : "none");
   }
+  setPrivilegedControlsVisible(isAuthenticated);
 
   if (sidebarIntervalDiv) {
-    sidebarIntervalDiv.html(selectedPyrId + " · " + selectedGptModel);
+    sidebarIntervalDiv.html(
+      isAuthenticated
+        ? `${selectedPyrId} · ${selectedGptModel}`
+        : `${selectedPyrId} · read-only`
+    );
   }
 }
 
@@ -295,6 +318,26 @@ function updateSidebarButton(key, { label, disabled, tone }) {
   btn.removeClass("tone-low");
   btn.removeClass("tone-off");
   btn.addClass(`tone-${tone || "mid"}`);
+}
+
+function setPrivilegedControlsVisible(visible) {
+  const privilegedKeys = [
+    "getCode",
+    "runNow",
+    "storeOnly",
+    "runStore",
+    "reboot",
+    "generate",
+    "autoFix",
+    "automationInterval",
+    "automation",
+    "stopAllAuto"
+  ];
+  for (const key of privilegedKeys) {
+    const btn = sidebarButtons[key];
+    if (!btn) continue;
+    btn.style("display", visible ? "block" : "none");
+  }
 }
 
 function automationIntervalLabel() {
@@ -363,6 +406,72 @@ function persistSelectedPyrId() {
   } catch (_) {}
 }
 
+function initializeAuthState() {
+  OPENAI_API_KEY = "";
+  mqttKey = "";
+  isAuthenticated = false;
+  try {
+    const mqttPassword = getKey("mqttKeyEncrypted");
+    const gptPassword = getKey("apiKeyEncryptedGpt");
+    if (!mqttPassword || !gptPassword) return;
+    const nextMqttKey = decryptKey(mqttKeyEncrypted, mqttPassword);
+    const nextOpenAiKey = decryptKey(apiKeyEncryptedGpt, gptPassword);
+    if (!nextMqttKey || !nextOpenAiKey) return;
+    mqttKey = nextMqttKey;
+    OPENAI_API_KEY = nextOpenAiKey;
+    isAuthenticated = true;
+  } catch (_) {}
+}
+
+function clearStoredAuthPasswords() {
+  try {
+    window.localStorage.removeItem("mqttKeyEncrypted");
+    window.localStorage.removeItem("apiKeyEncryptedGpt");
+  } catch (_) {}
+}
+
+function loginAuthenticatedMode() {
+  const mqttPassword = window.prompt("Please enter MQTT password (mqttKeyEncrypted):", "");
+  if (!mqttPassword) return;
+  const gptPassword = window.prompt("Please enter ChatGPT password (apiKeyEncryptedGpt):", "");
+  if (!gptPassword) return;
+
+  const nextMqttKey = decryptKey(mqttKeyEncrypted, mqttPassword);
+  const nextOpenAiKey = decryptKey(apiKeyEncryptedGpt, gptPassword);
+  if (!nextMqttKey || !nextOpenAiKey) {
+    logLine("Login failed: invalid password.");
+    return;
+  }
+
+  storeKey("mqttKeyEncrypted", mqttPassword);
+  storeKey("apiKeyEncryptedGpt", gptPassword);
+  mqttKey = nextMqttKey;
+  OPENAI_API_KEY = nextOpenAiKey;
+  isAuthenticated = true;
+  logLine("Authenticated mode enabled.");
+  reconnectForCurrentAuthMode();
+  syncSidebarControls();
+}
+
+function logoutAuthenticatedMode() {
+  clearStoredAuthPasswords();
+  OPENAI_API_KEY = "";
+  mqttKey = "";
+  isAuthenticated = false;
+  autoFixEnabled = false;
+  automationEnabled = false;
+  clearAutomationTimer();
+  logLine("Logged out. Switched to read-only mode.");
+  reconnectForCurrentAuthMode();
+  syncSidebarControls();
+}
+
+function reconnectForCurrentAuthMode() {
+  const wasConnected = !!client;
+  if (client) disconnectMQTT();
+  if (wasConnected || !client) connectMQTT();
+}
+
 function mqttCmdTopic(pyrId = selectedPyrId) {
   return `/glow_dk_cph/${pyrId}/cmd`;
 }
@@ -379,6 +488,10 @@ function mqttCodeStateTopic(pyrId = selectedPyrId) {
   return `/glow_dk_cph/${pyrId}/code_state`;
 }
 
+function mqttDashboardSyncTopic(pyrId = selectedPyrId) {
+  return `/glow_dk_cph/${pyrId}/dashboard_sync`;
+}
+
 function subscribeReflectorTopics(pyrId = selectedPyrId) {
   client.subscribe(mqttEvtTopic(pyrId), (err) => {
     if (err) logLine("Subscribe error: " + err);
@@ -392,6 +505,10 @@ function subscribeReflectorTopics(pyrId = selectedPyrId) {
     if (err) logLine("Subscribe error: " + err);
     else logLine("Subscribed: " + mqttCodeStateTopic(pyrId));
   });
+  client.subscribe(mqttDashboardSyncTopic(pyrId), (err) => {
+    if (err) logLine("Subscribe error: " + err);
+    else logLine("Subscribed: " + mqttDashboardSyncTopic(pyrId));
+  });
 }
 
 function unsubscribeReflectorTopics(pyrId) {
@@ -399,6 +516,7 @@ function unsubscribeReflectorTopics(pyrId) {
   client.unsubscribe(mqttEvtTopic(pyrId));
   client.unsubscribe(mqttReflectionTopic(pyrId));
   client.unsubscribe(mqttCodeStateTopic(pyrId));
+  client.unsubscribe(mqttDashboardSyncTopic(pyrId));
 }
 
 function resubscribeReflectorTopics(prevId, nextId) {
@@ -687,7 +805,8 @@ function connectMQTT() {
   logLine("Connecting MQTT as " + clientId + "...");
   syncSidebarControls();
 
-  client = mqtt.connect("wss://reflector:" + mqttKey + "@reflector.cloud.shiftr.io", {
+  const mqttToken = isAuthenticated ? mqttKey : MQTT_READONLY_TOKEN;
+  client = mqtt.connect("wss://reflector:" + mqttToken + "@reflector.cloud.shiftr.io", {
     clientId,
     keepalive: 20,
     reconnectPeriod: 1000,
@@ -696,11 +815,13 @@ function connectMQTT() {
 
   client.on("connect", () => {
     isConnected = true;
-    statusText = "MQTT connected";
-    logLine("MQTT connected.");
+    statusText = isAuthenticated ? "MQTT connected" : "MQTT connected (read-only)";
+    logLine(isAuthenticated ? "MQTT connected." : "MQTT connected in read-only mode.");
     syncSidebarControls();
     subscribeReflectorTopics(selectedPyrId);
-    requestSelectedReflectorCode();
+    if (isAuthenticated) {
+      requestSelectedReflectorCode();
+    }
   });
 
   client.on("reconnect", () => {
@@ -732,6 +853,10 @@ function connectMQTT() {
     }
     if (topic === mqttCodeStateTopic()) {
       applyCodeStateMessage(s);
+      return;
+    }
+    if (topic === mqttDashboardSyncTopic()) {
+      applyDashboardSyncMessage(s);
       return;
     }
     if (topic !== mqttEvtTopic()) return;
@@ -804,6 +929,10 @@ function publishJsonLine(obj) {
     logLine("MQTT not connected.");
     return;
   }
+  if (!isAuthenticated) {
+    logLine("Read-only mode: command not sent.");
+    return;
+  }
   const payload = JSON.stringify(obj) + "\n";
   client.publish(mqttCmdTopic(), payload);
   logLine(">>> " + payload.trim());
@@ -814,7 +943,8 @@ function publishReflectionUpdate(description, code) {
   const payload = JSON.stringify({
     description: description || "",
     code: code || "",
-    generated_at: new Date().toISOString()
+    generated_at: new Date().toISOString(),
+    dashboard_id: dashboardInstanceId
   });
   client.publish(mqttReflectionTopic(), payload, { retain: true });
   logLine("Published reflection update.");
@@ -825,10 +955,23 @@ function publishCodeState(code, source) {
   const payload = JSON.stringify({
     code: code || "",
     source: source || "dashboard2",
-    updated_at: new Date().toISOString()
+    updated_at: new Date().toISOString(),
+    dashboard_id: dashboardInstanceId
   });
   client.publish(mqttCodeStateTopic(), payload, { retain: true });
   logLine("Published retained code state.");
+}
+
+function publishDashboardSync(eventType, data = {}) {
+  if (!client || !isConnected || !isAuthenticated) return;
+  const payload = JSON.stringify({
+    event: eventType,
+    reflector_id: selectedPyrId,
+    dashboard_id: dashboardInstanceId,
+    sent_at: new Date().toISOString(),
+    ...data
+  });
+  client.publish(mqttDashboardSyncTopic(), payload);
 }
 
 function applyReflectionMessage(msg) {
@@ -866,6 +1009,42 @@ function applyCodeStateMessage(msg) {
   }
 }
 
+function applyDashboardSyncMessage(msg) {
+  if (!msg) return;
+  try {
+    const obj = JSON.parse(msg);
+    if (!obj || obj.dashboard_id === dashboardInstanceId) return;
+    if (obj.event === "code_update" && typeof obj.code === "string") {
+      if (getEditorValue() !== obj.code) {
+        setEditorValue(obj.code);
+        refreshPreview();
+      }
+      if (typeof obj.description === "string" && obj.description) {
+        lastDescription = obj.description;
+        descriptionDiv.html(lastDescription);
+        if (previewController) previewController.setReflectionText(lastDescription);
+        updateReflectionTypography();
+      }
+      logLine("Synced code from another dashboard.");
+      return;
+    }
+    if (obj.event === "stop_all_auto") {
+      automationEnabled = false;
+      clearAutomationTimer();
+      logLine("Automation stopped by another dashboard.");
+      syncSidebarControls();
+    }
+  } catch (_) {}
+}
+
+function stopAllAutomationEverywhere() {
+  automationEnabled = false;
+  clearAutomationTimer();
+  logLine("Stopping automation on all dashboards.");
+  publishDashboardSync("stop_all_auto");
+  syncSidebarControls();
+}
+
 function logSummarizedEvtMessage(topic, msg) {
   if (!msg || msg[0] !== "{") return false;
   try {
@@ -888,18 +1067,21 @@ function cmdRunNow() {
   const code = getEditorValue();
   publishJsonLine({ cmd: "run_now", code });
   publishCodeState(code, "run_now");
+  publishDashboardSync("code_update", { code });
 }
 
 function cmdSetCode() {
   const code = getEditorValue();
   publishJsonLine({ cmd: "set_code", code });
   publishCodeState(code, "set_code");
+  publishDashboardSync("code_update", { code });
 }
 
 function cmdRunAndStore() {
   const code = getEditorValue();
   publishJsonLine({ cmd: "run_and_store", code });
   publishCodeState(code, "run_and_store");
+  publishDashboardSync("code_update", { code });
 }
 
 function cmdReboot() {
@@ -948,6 +1130,7 @@ async function generateWrenchAndRun() {
     publishJsonLine({ cmd: "run_now", code: out.wrench_code });
     publishReflectionUpdate(out.description, out.wrench_code);
     publishCodeState(out.wrench_code, "generate");
+    publishDashboardSync("code_update", { code: out.wrench_code, description: out.description || "" });
     logLine("Sent run_now with generated code (" + out.wrench_code.length + " chars).");
 
     if (automationEnabled) {
@@ -1222,6 +1405,7 @@ async function autoFixWrenchAndRun(errText) {
     if (fixed.description) logLine(fixed.description);
     publishJsonLine({ cmd: "run_now", code: fixed.wrench_code });
     publishCodeState(fixed.wrench_code, "auto_fix");
+    publishDashboardSync("code_update", { code: fixed.wrench_code, description: fixed.description || "" });
     logLine("Sent run_now with fixed code.");
   } catch (e) {
     logLine("Auto-fix failed: " + (e && e.message ? e.message : e));
