@@ -12,6 +12,7 @@ const GPT_MODEL_OPTIONS = [
   "gpt-5-codex"
 ];
 const DEFAULT_GPT_MODEL = "gpt-5.1-codex";
+const ORBIT_STORAGE_VERSION = "v2";
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -1537,6 +1538,10 @@ class WrenchPreview3D {
         this.lastMouseX = e.clientX;
         this.lastMouseY = e.clientY;
       });
+      elt.addEventListener("dblclick", (e) => {
+        e.preventDefault();
+        this.resetOrbitState(displayMode);
+      });
       const releasePointer = (e) => {
         if (this.pointerId !== null && e.pointerId !== undefined && this.pointerId !== e.pointerId) return;
         this.isDragging = false;
@@ -1565,7 +1570,9 @@ class WrenchPreview3D {
 
       p.push();
       p.scale(displayMode === "preview" ? 1.9 : 1.15);
+      p.scale(1, -1, 1);
       p.rotateX(-0.25);
+      this.drawGroundPlane(p);
       this.drawPyramid(p);
       p.pop();
 
@@ -1578,13 +1585,13 @@ class WrenchPreview3D {
   }
 
   orbitStorageKey(mode) {
-    return `dashboard2_orbit_${mode}`;
+    return `dashboard2_orbit_${mode}_${ORBIT_STORAGE_VERSION}`;
   }
 
   defaultOrbitState(mode) {
     return mode === "preview"
-      ? { yaw: 0.72, pitch: -0.56, distance: 430, targetX: 58, targetY: 8, targetZ: 0 }
-      : { yaw: 0.62, pitch: -0.48, distance: 330, targetX: 26, targetY: 6, targetZ: 0 };
+      ? { yaw: 0.72, pitch: 0.68, distance: 680, targetX: 58, targetY: 8, targetZ: 0 }
+      : { yaw: 0.62, pitch: 0.58, distance: 500, targetX: 26, targetY: 6, targetZ: 0 };
   }
 
   cloneOrbitState(state) {
@@ -1613,7 +1620,7 @@ class WrenchPreview3D {
     const cy = Math.cos(state.yaw);
     const sy = Math.sin(state.yaw);
     const eyeX = state.targetX + state.distance * cp * sy;
-    const eyeY = state.targetY + state.distance * sp;
+    const eyeY = state.targetY - state.distance * sp;
     const eyeZ = state.targetZ + state.distance * cp * cy;
     p.camera(
       eyeX, eyeY, eyeZ,
@@ -1650,6 +1657,13 @@ class WrenchPreview3D {
     } catch (_) {}
   }
 
+  resetOrbitState(mode) {
+    const key = mode === "debug" ? "debug" : "preview";
+    this.orbitStates[key] = this.defaultOrbitState(key);
+    this.appliedCameraMode = key;
+    this.saveOrbitState();
+  }
+
   updateOrbitFromPointerDelta(dx, dy) {
     if (!this.isDragging) return;
     const state = this.getOrbitState(this.appliedCameraMode || displayMode);
@@ -1659,7 +1673,7 @@ class WrenchPreview3D {
       state.targetY += dy * panScale;
     } else {
       state.yaw += dx * 0.01;
-      state.pitch = constrain(state.pitch + dy * 0.01, -1.35, 1.35);
+      state.pitch = constrain(state.pitch + dy * 0.01, 0.0, 1.52);
     }
     this.saveOrbitState();
   }
@@ -1775,6 +1789,53 @@ class WrenchPreview3D {
     for (const tube of tubes) {
       this.drawSegmentedCylinder(p, tube.from, tube.to, tube.colors);
     }
+    p.pop();
+  }
+
+  drawGroundPlane(p) {
+    const a = [-95, 40, -55];
+    const b = [95, 40, -55];
+    const c = [0, -70, 85];
+    const center = [
+      (a[0] + b[0] + c[0]) / 3,
+      (a[1] + b[1] + c[1]) / 3,
+      (a[2] + b[2] + c[2]) / 3
+    ];
+    const u = normalizeVec3([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+    const ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const proj = dotVec3(ac, u);
+    const vRaw = [
+      ac[0] - u[0] * proj,
+      ac[1] - u[1] * proj,
+      ac[2] - u[2] * proj
+    ];
+    const v = normalizeVec3(vRaw);
+    const n = normalizeVec3(crossVec3(u, v));
+    const offset = 19.5;
+    const shiftedCenter = [
+      center[0] + n[0] * offset,
+      center[1] + n[1] * offset,
+      center[2] + n[2] * offset
+    ];
+    const radius = 1100;
+    const steps = 72;
+
+    p.push();
+    p.noStroke();
+    p.fill(30, 30, 30);
+    p.beginShape();
+    for (let i = 0; i < steps; i++) {
+      const ang = (i / steps) * Math.PI * 2;
+      const pt = addScaledPlaneCorner(
+        shiftedCenter,
+        u,
+        v,
+        Math.cos(ang) * radius,
+        Math.sin(ang) * radius
+      );
+      p.vertex(pt[0], pt[1], pt[2]);
+    }
+    p.endShape(p.CLOSE);
     p.pop();
   }
 
@@ -2184,6 +2245,31 @@ function lerpVec3(a, b, t) {
     a[0] + (b[0] - a[0]) * t,
     a[1] + (b[1] - a[1]) * t,
     a[2] + (b[2] - a[2]) * t
+  ];
+}
+
+function dotVec3(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function normalizeVec3(v) {
+  const len = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / len, v[1] / len, v[2] / len];
+}
+
+function crossVec3(a, b) {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0]
+  ];
+}
+
+function addScaledPlaneCorner(center, u, v, su, sv) {
+  return [
+    center[0] + u[0] * su + v[0] * sv,
+    center[1] + u[1] * su + v[1] * sv,
+    center[2] + u[2] * su + v[2] * sv
   ];
 }
 
