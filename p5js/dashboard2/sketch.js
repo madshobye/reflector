@@ -17,7 +17,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v3";
+const DASHBOARD2_VERSION = "v15";
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -35,6 +35,8 @@ let debugDownloadsEnabled = false;
 let generationInProgress = false;
 let lastPromptText = "";
 let lastDescription = "";
+let lastDesignRationale = "";
+let lastLocation = "";
 let lastCompileErrText = "";
 let lastCompileErrMs = 0;
 let selectedGptModel = DEFAULT_GPT_MODEL;
@@ -56,6 +58,9 @@ let editorEl;
 let aceEditor = null;
 let consoleDiv;
 let descriptionDiv;
+let reflectionToggleWrap = null;
+let reflectionTextToggleButton = null;
+let reflectionRationaleToggleButton = null;
 let metricsDiv;
 let emptyDiv;
 let previewDiv;
@@ -94,6 +99,7 @@ let sidebarReflectionLink = null;
 let sidebarPromptLink = null;
 let sidebarButtons = {};
 let sidebarSyncTimer = null;
+let reflectionPanelMode = "reflection";
 
 async function setup() {
   noCanvas();
@@ -132,6 +138,20 @@ function createDomPanels() {
   editorEl.parent(editorSectionEl);
   editorEl.id("editor");
   editorEl.class("panel-box");
+
+  reflectionToggleWrap = createDiv("");
+  reflectionToggleWrap.parent(reflectionSectionEl);
+  reflectionToggleWrap.class("reflection-toggle-wrap");
+
+  reflectionTextToggleButton = createButton("Reflection");
+  reflectionTextToggleButton.parent(reflectionToggleWrap);
+  reflectionTextToggleButton.class("reflection-toggle is-active");
+  reflectionTextToggleButton.mousePressed(() => setReflectionPanelMode("reflection"));
+
+  reflectionRationaleToggleButton = createButton("Rationale");
+  reflectionRationaleToggleButton.parent(reflectionToggleWrap);
+  reflectionRationaleToggleButton.class("reflection-toggle");
+  reflectionRationaleToggleButton.mousePressed(() => setReflectionPanelMode("rationale"));
 
   descriptionDiv = createDiv("");
   descriptionDiv.parent(reflectionSectionEl);
@@ -622,6 +642,8 @@ function resubscribeReflectorTopics(prevId, nextId) {
 
 function resetSelectedReflectorState() {
   lastDescription = "";
+  lastDesignRationale = "";
+  lastLocation = "";
   descriptionDiv.html("");
   if (previewController) previewController.setReflectionText("");
   setEditorValue("");
@@ -635,6 +657,33 @@ function resetSelectedReflectorState() {
     loop_stack_hw: "--"
   };
   renderMetrics();
+}
+
+function reflectionWithLocation(reflectionText, locationText) {
+  const reflection = String(reflectionText || "").trim();
+  const location = String(locationText || "").trim();
+  if (!location) return reflection;
+  if (!reflection) return location;
+  return reflection + "\n\nLocation: " + location;
+}
+
+function currentReflectionPanelText() {
+  if (reflectionPanelMode === "rationale") return lastDesignRationale || "";
+  return reflectionWithLocation(lastDescription, lastLocation);
+}
+
+function setReflectionPanelMode(nextMode) {
+  reflectionPanelMode = nextMode === "rationale" ? "rationale" : "reflection";
+  if (reflectionTextToggleButton) {
+    reflectionTextToggleButton.toggleClass("is-active", reflectionPanelMode === "reflection");
+  }
+  if (reflectionRationaleToggleButton) {
+    reflectionRationaleToggleButton.toggleClass("is-active", reflectionPanelMode === "rationale");
+  }
+  if (descriptionDiv) {
+    descriptionDiv.html(currentReflectionPanelText());
+  }
+  updateReflectionTypography();
 }
 
 function requestSelectedReflectorCode() {
@@ -686,7 +735,7 @@ function applyDisplayMode() {
     modeToggleButton.html(displayMode === "preview" ? "Debug" : "Preview");
   }
   if (previewController) {
-    previewController.setReflectionText(lastDescription || descriptionDiv?.elt?.textContent || "");
+    previewController.setReflectionText(lastDescription || "");
   }
   updateReflectionTypography();
 }
@@ -705,7 +754,7 @@ function updateReflectionTypography() {
   const padY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
   const boxW = Math.max(120, descriptionDiv.elt.clientWidth - padX);
   const boxH = Math.max(80, descriptionDiv.elt.clientHeight - padY);
-  const textValue = lastDescription || descriptionDiv.elt.textContent || "";
+  const textValue = currentReflectionPanelText() || descriptionDiv.elt.textContent || "";
   const fittedSize = fitReflectionTextSize(textValue, boxW, boxH);
   descriptionDiv.style("font-family", "Georgia, Times New Roman, serif");
   descriptionDiv.style("font-size", fittedSize + "px");
@@ -1051,10 +1100,12 @@ function publishJsonLine(obj) {
   logLine(">>> " + payload.trim());
 }
 
-function publishReflectionUpdate(reflection, code) {
+function publishReflectionUpdate(reflection, code, designRationale, location) {
   if (!client || !isConnected) return;
   const payload = JSON.stringify({
     reflection: reflection || "",
+    design_rationale: designRationale || "",
+    location: location || "",
     code: code || "",
     generated_at: new Date().toISOString(),
     dashboard_id: dashboardInstanceId
@@ -1205,7 +1256,9 @@ function applyReflectionMessage(msg) {
       (typeof obj.description === "string" ? obj.description : "");
     if (typeof reflectionText === "string") {
       lastDescription = reflectionText;
-      descriptionDiv.html(lastDescription);
+      lastDesignRationale = typeof obj.design_rationale === "string" ? obj.design_rationale : "";
+      lastLocation = typeof obj.location === "string" ? obj.location : "";
+      descriptionDiv.html(currentReflectionPanelText());
       if (previewController) previewController.setReflectionText(lastDescription);
       updateReflectionTypography();
     }
@@ -1249,7 +1302,9 @@ function applyDashboardSyncMessage(msg) {
         (typeof obj.description === "string" ? obj.description : "");
       if (typeof reflectionText === "string" && reflectionText) {
         lastDescription = reflectionText;
-        descriptionDiv.html(lastDescription);
+        lastDesignRationale = typeof obj.design_rationale === "string" ? obj.design_rationale : lastDesignRationale;
+        lastLocation = typeof obj.location === "string" ? obj.location : lastLocation;
+        descriptionDiv.html(currentReflectionPanelText());
         if (previewController) previewController.setReflectionText(lastDescription);
         updateReflectionTypography();
       }
@@ -1370,7 +1425,9 @@ async function generateWrenchAndRun() {
 
     if (out.reflection) {
       lastDescription = out.reflection;
-      descriptionDiv.html(lastDescription);
+      lastDesignRationale = out.design_rationale || "";
+      lastLocation = out.location || "";
+      descriptionDiv.html(currentReflectionPanelText());
       if (previewController) previewController.setReflectionText(lastDescription);
       updateReflectionTypography();
       logLine("— ChatGPT reflection —");
@@ -1382,9 +1439,14 @@ async function generateWrenchAndRun() {
     lastPromptText = out.reflection || "";
     refreshPreview();
     publishJsonLine({ cmd: "run_now", code: out.wrench_code });
-    publishReflectionUpdate(out.reflection, out.wrench_code);
+    publishReflectionUpdate(out.reflection, out.wrench_code, out.design_rationale || "", out.location || "");
     publishCodeState(out.wrench_code, "generate");
-    publishDashboardSync("code_update", { code: out.wrench_code, reflection: out.reflection || "" });
+    publishDashboardSync("code_update", {
+      code: out.wrench_code,
+      reflection: out.reflection || "",
+      design_rationale: out.design_rationale || "",
+      location: out.location || ""
+    });
     logLine("Sent run_now with generated code (" + out.wrench_code.length + " chars).");
 
     if (automationEnabled) {
@@ -1606,9 +1668,11 @@ async function openaiGenerateWrenchFromDoc(docMd) {
           additionalProperties: false,
           properties: {
             reflection: { type: "string" },
+            design_rationale: { type: "string" },
+            location: { type: "string" },
             wrench_code: { type: "string" }
           },
-          required: ["reflection", "wrench_code"]
+          required: ["reflection", "design_rationale", "location", "wrench_code"]
         }
       }
     }
@@ -1642,7 +1706,9 @@ async function openaiGenerateWrenchFromDoc(docMd) {
           "",
           "Deliver:",
           "1) a short reflection on what you generated",
-          "2) the full Wrench code"
+          "2) a short design rationale explaining the design choices",
+          "3) the location as a short string",
+          "4) the full Wrench code"
         ].join("\n")
       }
     ],
@@ -2015,6 +2081,7 @@ const PREVIEW_TUBE_ENDPOINTS = [
   [{ x: 0.0, y: -24.699, z: 99.737 }, { x: 0.0, y: 102.266, z: 9.959 }]
 ];
 const TOTAL_PREVIEW_LEDS = 5352;
+const PREVIEW_SEGMENTS_PER_TUBE = 200;
 
 function createBuiltinPreviewPalettes() {
   return {
@@ -2036,7 +2103,7 @@ class WrenchPreviewController {
     this.lastSource = "";
     this.error = "";
     this.loopStarted = false;
-    this.segmentColors = Array.from({ length: 6 }, () => Array.from({ length: 40 }, () => "#000000"));
+    this.segmentColors = Array.from({ length: 6 }, () => Array.from({ length: PREVIEW_SEGMENTS_PER_TUBE }, () => "#000000"));
     this.preview3d = new WrenchPreview3D(hostDiv);
     this.startLoop();
   }
@@ -2119,7 +2186,7 @@ class WrenchPreviewController {
 class WrenchPreview3D {
   constructor(hostDiv) {
     this.hostDiv = hostDiv;
-    this.segmentColors = Array.from({ length: 6 }, () => Array.from({ length: 40 }, () => "#000000"));
+    this.segmentColors = Array.from({ length: 6 }, () => Array.from({ length: PREVIEW_SEGMENTS_PER_TUBE }, () => "#000000"));
     this.error = "";
     this.reflectionText = "";
     this.appliedCameraMode = null;
@@ -2451,10 +2518,24 @@ class WrenchPreview3D {
     ];
     const radius = 1100;
     const steps = 72;
+    const glowColors = [
+      averageHexColor(this.segmentColors[0] || []),
+      averageHexColor(this.segmentColors[1] || []),
+      averageHexColor(this.segmentColors[2] || []),
+      averageHexColor(this.segmentColors[3] || []),
+      averageHexColor(this.segmentColors[4] || []),
+      averageHexColor(this.segmentColors[5] || [])
+    ];
+    const glowAnchors = [
+      center,
+      [-47.5, 38.784, -27.425],
+      [47.5, 38.784, -27.425],
+      [0.0, 38.784, 54.848]
+    ];
 
     p.push();
     p.noStroke();
-    p.fill(30, 30, 30);
+    p.fill(18, 18, 18);
     p.beginShape();
     for (let i = 0; i < steps; i++) {
       const ang = (i / steps) * Math.PI * 2;
@@ -2468,11 +2549,47 @@ class WrenchPreview3D {
       p.vertex(pt[0], pt[1], pt[2]);
     }
     p.endShape(p.CLOSE);
+
+    if (p.drawingContext?.disable && p.drawingContext?.DEPTH_TEST !== undefined) {
+      p.drawingContext.disable(p.drawingContext.DEPTH_TEST);
+    }
+    for (let i = 0; i < glowAnchors.length; i++) {
+      const src = glowColors[i] || { r: 0, g: 0, b: 0 };
+      const anchor = glowAnchors[i];
+      const alpha = Math.max(src.r, src.g, src.b) * 0.035;
+      if (alpha <= 1) continue;
+      const projected = projectPointToPlane(anchor, shiftedCenter, u, v);
+      const baseW = 180 + i * 28;
+      const baseH = 90 + i * 18;
+      for (let layer = 9; layer >= 0; layer--) {
+        const layerScale = 1.5 + layer * 0.5;
+        const layerAlpha = alpha * (0.28 - layer * 0.022);
+        if (layerAlpha <= 0.5) continue;
+        p.fill(src.r, src.g, src.b, layerAlpha);
+        p.beginShape();
+        for (let j = 0; j < 28; j++) {
+          const ang = (j / 28) * Math.PI * 2;
+          const pt = addScaledPlaneCorner(
+            projected,
+            u,
+            v,
+            Math.cos(ang) * baseW * 0.5 * layerScale,
+            Math.sin(ang) * baseH * 0.5 * layerScale
+          );
+          p.vertex(pt[0], pt[1], pt[2]);
+        }
+        p.endShape(p.CLOSE);
+      }
+    }
+    if (p.drawingContext?.enable && p.drawingContext?.DEPTH_TEST !== undefined) {
+      p.drawingContext.enable(p.drawingContext.DEPTH_TEST);
+    }
+
     p.pop();
   }
 
   drawSegmentedCylinder(p, from, to, colors) {
-    const segments = Math.max(1, colors.length || 40);
+    const segments = Math.max(1, colors.length || PREVIEW_SEGMENTS_PER_TUBE);
     const radius = 6.5;
     for (let i = 0; i < segments; i++) {
       const t0 = i / segments;
@@ -2498,11 +2615,31 @@ class WrenchPreview3D {
     const yaw = Math.atan2(dx, dz);
     const pitch = Math.acos(Math.max(-1, Math.min(1, dy / len)));
     const c = hexToRgb(hexColor);
+    const glowAlpha = Math.max(c.r, c.g, c.b) * 0.032;
 
     p.push();
     p.translate(midX, midY, midZ);
     p.rotateY(yaw);
     p.rotateX(pitch);
+
+    if (glowAlpha > 1) {
+      if (p.drawingContext?.disable && p.drawingContext?.DEPTH_TEST !== undefined) {
+        p.drawingContext.disable(p.drawingContext.DEPTH_TEST);
+      }
+      for (let layer = 0; layer < 6; layer++) {
+        const layerScale = 1.35 + layer * 0.22;
+        const layerAlpha = glowAlpha * (0.28 - layer * 0.035);
+        if (layerAlpha <= 0.5) continue;
+        p.push();
+        p.fill(c.r, c.g, c.b, layerAlpha);
+        p.cylinder(radius * layerScale, len * (1.015 + layer * 0.015), 12, 1, false, false);
+        p.pop();
+      }
+      if (p.drawingContext?.enable && p.drawingContext?.DEPTH_TEST !== undefined) {
+        p.drawingContext.enable(p.drawingContext.DEPTH_TEST);
+      }
+    }
+
     p.emissiveMaterial(c.r, c.g, c.b);
     p.cylinder(radius, len, 10, 1, false, false);
     p.pop();
@@ -3050,7 +3187,7 @@ class WrenchPreviewRuntime {
   }
 
   getTubeSegmentHexColors() {
-    const segmentsPerTube = 40;
+    const segmentsPerTube = PREVIEW_SEGMENTS_PER_TUBE;
     const out = [];
     for (let tube = 0; tube < 6; tube++) {
       const row = [];
@@ -3157,6 +3294,27 @@ function mixRgb(a, b, t) {
   };
 }
 
+function averageHexColor(hexList) {
+  if (!hexList || !hexList.length) return { r: 0, g: 0, b: 0 };
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let count = 0;
+  for (const hex of hexList) {
+    const c = hexToRgb(hex);
+    r += c.r;
+    g += c.g;
+    b += c.b;
+    count += 1;
+  }
+  if (!count) return { r: 0, g: 0, b: 0 };
+  return {
+    r: r / count,
+    g: g / count,
+    b: b / count
+  };
+}
+
 function createPreviewMathScope() {
   const mathScope = Object.create(Math);
   mathScope.fmod = (a, b) => {
@@ -3227,6 +3385,21 @@ function addScaledPlaneCorner(center, u, v, su, sv) {
     center[1] + u[1] * su + v[1] * sv,
     center[2] + u[2] * su + v[2] * sv
   ];
+}
+
+function projectPointToPlane(point, planeOrigin, u, v) {
+  const rel = [
+    point[0] - planeOrigin[0],
+    point[1] - planeOrigin[1],
+    point[2] - planeOrigin[2]
+  ];
+  return addScaledPlaneCorner(
+    planeOrigin,
+    u,
+    v,
+    dotVec3(rel, u),
+    dotVec3(rel, v)
+  );
 }
 
 function hexToRgb(hex) {
