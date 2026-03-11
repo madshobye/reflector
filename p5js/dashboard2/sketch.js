@@ -8,6 +8,8 @@ const PYR_ID = "reflector1";
 const MQTT_CMD_TOPIC = `/glow_dk_cph/${PYR_ID}/cmd`;
 const MQTT_EVT_TOPIC = `/glow_dk_cph/${PYR_ID}/evt`;
 const MQTT_REFLECTION_TOPIC = `/glow_dk_cph/${PYR_ID}/reflection`;
+const MQTT_CODE_STATE_TOPIC = `/glow_dk_cph/${PYR_ID}/code_state`;
+const UI_PALETTE = ["#edae49", "#d1495b", "#00798c", "#30638e", "#003d5b"];
 
 let autoFixEnabled = false;
 let autoFixInProgress = false;
@@ -36,6 +38,7 @@ let consoleDiv;
 let descriptionDiv;
 let metricsDiv;
 let emptyDiv;
+let previewDiv;
 let statusText = "MQTT not connected";
 let appEl;
 let sidebarEl;
@@ -55,6 +58,8 @@ let deviceMetrics = {
   compile_stack_hw: "--",
   loop_stack_hw: "--"
 };
+let previewController = null;
+let previewRefreshTimer = null;
 
 async function setup() {
   createLayout();
@@ -80,74 +85,113 @@ async function setup() {
   logLine("evt: " + MQTT_EVT_TOPIC);
   renderMetrics();
   updateDomLayout();
+  setupPreview();
   connectMQTT();
 }
 
 function draw() {
-  background(8, 10, 14);
+  background(0, 25, 42);
   drawSidebar();
 }
 
 function drawSidebar() {
   noStroke();
-  fill(16, 22, 28);
+  fill(0, 25, 42);
   rect(0, 0, width, height);
-  fill(28, 37, 46);
+  fill(17, 50, 72);
   rect(width - 1, 0, 1, height);
 
-  const innerW = 220;
-  const innerX = (width - innerW) * 0.5;
-  uiListStart({ x: innerX, y: 20, width: innerW, dir: "vertical", margin: 8 });
+  const sideMargin = 16;
+  const innerW = width - sideMargin * 2;
+  const innerX = sideMargin;
+  let y = 20;
+  const gap = 8;
+
   uiText("Reflector Dashboard", {
-    height: 44,
+    x: innerX,
+    y,
+    width: innerW,
+    height: 32,
     fontSize: 20,
-    hAlign: "center",
-    bgColor: "#14212b",
-    textColor: "#f3ede2"
+    textStyle: BOLD,
+    hAlign: "left",
+    bgColor: "transparent",
+    textColor: "#f4f7fb"
   });
+  y += 32 + gap;
 
   uiText("Status: " + statusText, {
-    height: 52,
-    bgColor: isConnected ? "#163321" : "#311b1b",
-    textColor: "#f3ede2",
+    x: innerX,
+    y,
+    width: innerW,
+    height: 32,
+    fontSize: 12,
+    textStyle: BOLD,
+    padding: 7,
+    bgColor: isConnected ? "#0f3f48" : "#4a1f30",
+    textColor: "#f4f7fb",
     vAlign: "middle"
   });
+  y += 32 + gap;
 
-  if (uiActionButton("Connect MQTT", !client, "#2f7f64").clicked) connectMQTT();
-  if (uiActionButton("Disconnect", !!client, "#7c3f3f").clicked) disconnectMQTT();
-  if (uiActionButton("Get Code", isConnected, "#355d84").clicked) cmdGetCode();
-  if (uiActionButton("Run Now", isConnected, "#355d84").clicked) cmdRunNow();
-  if (uiActionButton("Store Only", isConnected, "#355d84").clicked) cmdSetCode();
-  if (uiActionButton("Run + Store", isConnected, "#355d84").clicked) cmdRunAndStore();
-  if (uiActionButton("Reboot", isConnected, "#6c4d2b").clicked) cmdReboot();
-  if (uiActionButton("Generate Wrench", isConnected && !generationInProgress, "#7d5bd2").clicked) {
+  if (uiActionButton("Connect MQTT", !client, UI_PALETTE[2], innerX, y, innerW).clicked) connectMQTT();
+  y += 32 + gap;
+  if (uiActionButton("Disconnect", !!client, UI_PALETTE[1], innerX, y, innerW).clicked) disconnectMQTT();
+  y += 32 + gap;
+  if (uiActionButton("Get Code", isConnected, UI_PALETTE[3], innerX, y, innerW).clicked) cmdGetCode();
+  y += 32 + gap;
+  if (uiActionButton("Run Now", isConnected, UI_PALETTE[3], innerX, y, innerW).clicked) cmdRunNow();
+  y += 32 + gap;
+  if (uiActionButton("Store Only", isConnected, UI_PALETTE[3], innerX, y, innerW).clicked) cmdSetCode();
+  y += 32 + gap;
+  if (uiActionButton("Run + Store", isConnected, UI_PALETTE[3], innerX, y, innerW).clicked) cmdRunAndStore();
+  y += 32 + gap;
+  if (uiActionButton("Reboot", isConnected, UI_PALETTE[0], innerX, y, innerW).clicked) cmdReboot();
+  y += 32 + gap;
+  if (uiActionButton("Generate Wrench", isConnected && !generationInProgress, UI_PALETTE[1], innerX, y, innerW).clicked) {
     generateWrenchAndRun();
   }
-  if (uiActionButton(autoFixEnabled ? "Auto-fix: ON" : "Auto-fix: OFF", true, autoFixEnabled ? "#2f7f64" : "#5c5454").clicked) {
+  y += 32 + gap;
+  if (uiActionButton(autoFixEnabled ? "Auto-fix: ON" : "Auto-fix: OFF", true, autoFixEnabled ? UI_PALETTE[2] : "#243847", innerX, y, innerW).clicked) {
     autoFixEnabled = !autoFixEnabled;
     logLine("Auto-fix is now " + (autoFixEnabled ? "ON" : "OFF"));
   }
-  if (uiActionButton(automationEnabled ? "Automation: ON" : "Automation: OFF", isConnected && !generationInProgress, automationEnabled ? "#2f7f64" : "#5c5454").clicked) {
+  y += 32 + gap;
+  if (uiActionButton(automationEnabled ? "Automation: ON" : "Automation: OFF", isConnected && !generationInProgress, automationEnabled ? UI_PALETTE[0] : "#243847", innerX, y, innerW).clicked) {
     toggleAutomation();
   }
-  if (uiActionButton("Insert Example", true, "#425064").clicked) setEditorValue(defaultWrenchExample());
-  if (uiActionButton("Clear Console", true, "#425064").clicked) consoleDiv.html("");
+  y += 32 + gap;
+  if (uiActionButton("Insert Example", true, UI_PALETTE[4], innerX, y, innerW).clicked) {
+    setEditorValue(defaultWrenchExample());
+    refreshPreview();
+  }
+  y += 32 + gap;
+  if (uiActionButton("Clear Console", true, UI_PALETTE[4], innerX, y, innerW).clicked) consoleDiv.html("");
+  y += 32 + gap;
 
   uiText("Automation interval: " + Math.round(AUTOMATION_INTERVAL_MS / 1000) + "s", {
+    x: innerX,
+    y,
+    width: innerW,
     height: 34,
-    bgColor: "#12171d",
-    textColor: "#a9bacb"
+    bgColor: "#092333",
+    textColor: "#9db9c9"
   });
-  uiListEnd();
 }
 
-function uiActionButton(label, enabled, activeColor) {
+function uiActionButton(label, enabled, activeColor, x, y, buttonWidth) {
   return uiButton(label, {
+    x,
+    y,
+    width: buttonWidth,
     height: 32,
-    bgColor: enabled ? activeColor : "#2a2f35",
-    textColor: enabled ? "#f7f1e6" : "#78838e",
-    hover: { bgColor: enabled ? lightenHex(activeColor, 18) : "#2a2f35" },
-    pressed: { bgColor: enabled ? darkenHex(activeColor, 18) : "#2a2f35" }
+    fontSize: 13,
+    textStyle: BOLD,
+    padding: 7,
+    bgColor: enabled ? activeColor : "#173042",
+    textColor: enabled ? "#f7f9fb" : "#6f8796",
+    hover: { bgColor: enabled ? lightenHex(activeColor, 14) : "#173042" },
+    pressed: { bgColor: enabled ? darkenHex(activeColor, 14) : "#173042" }
   });
 }
 
@@ -157,10 +201,10 @@ function applyBaseUiStyle() {
       fontSize: 15,
       padding: 10,
       rounding: 10,
-      bgColor: "#1d2832",
-      textColor: "#f3ede2",
-      hover: { bgColor: "#293746" },
-      pressed: { bgColor: "#141c24" }
+      bgColor: "#0c2432",
+      textColor: "#eaf0f4",
+      hover: { bgColor: "#133246" },
+      pressed: { bgColor: "#071a25" }
     },
     button: { height: 38 },
     text: { height: 36 },
@@ -177,7 +221,7 @@ function createDomPanels() {
   descriptionDiv = createDiv("");
   descriptionDiv.parent(reflectionSectionEl);
   descriptionDiv.class("panel-box");
-  styleLogPanel(descriptionDiv, "#131922");
+  styleLogPanel(descriptionDiv, "#0a1f2d");
 
   metricsDiv = createDiv("");
   metricsDiv.parent(metricsSectionEl);
@@ -187,12 +231,17 @@ function createDomPanels() {
   emptyDiv = createDiv("");
   emptyDiv.parent(emptySectionEl);
   emptyDiv.class("panel-box");
-  emptyDiv.style("background", "#0e1318");
+  emptyDiv.style("background", "#000000");
+  emptyDiv.style("padding", "0");
+  emptyDiv.style("overflow", "hidden");
+  previewDiv = createDiv("");
+  previewDiv.parent(emptyDiv);
+  previewDiv.class("preview-wrap");
 
   consoleDiv = createDiv("");
   consoleDiv.parent(consoleSectionEl);
   consoleDiv.class("panel-box");
-  styleLogPanel(consoleDiv, "#101417");
+  styleLogPanel(consoleDiv, "#091520");
 }
 
 function styleLogPanel(el, bg) {
@@ -202,8 +251,8 @@ function styleLogPanel(el, bg) {
   el.style("font-size", "12px");
   el.style("padding", "12px");
   el.style("background", bg);
-  el.style("color", "#d7dfeb");
-  el.style("border", "1px solid #263341");
+  el.style("color", "#dce7ee");
+  el.style("border", "1px solid #18435e");
   el.style("border-radius", "10px");
 }
 
@@ -241,6 +290,14 @@ function connectMQTT() {
       if (err) logLine("Subscribe error: " + err);
       else logLine("Subscribed: " + MQTT_EVT_TOPIC);
     });
+    client.subscribe(MQTT_REFLECTION_TOPIC, (err) => {
+      if (err) logLine("Subscribe error: " + err);
+      else logLine("Subscribed: " + MQTT_REFLECTION_TOPIC);
+    });
+    client.subscribe(MQTT_CODE_STATE_TOPIC, (err) => {
+      if (err) logLine("Subscribe error: " + err);
+      else logLine("Subscribed: " + MQTT_CODE_STATE_TOPIC);
+    });
   });
 
   client.on("reconnect", () => {
@@ -263,6 +320,14 @@ function connectMQTT() {
 
   client.on("message", (topic, message) => {
     const s = message ? message.toString() : "";
+    if (topic === MQTT_REFLECTION_TOPIC) {
+      applyReflectionMessage(s);
+      return;
+    }
+    if (topic === MQTT_CODE_STATE_TOPIC) {
+      applyCodeStateMessage(s);
+      return;
+    }
     logLine(topic + ": " + s);
     maybeAutoFixFromEvt(s);
     tryAutoFillEditorFromGetCode(s);
@@ -342,6 +407,50 @@ function publishReflectionUpdate(description, code) {
   logLine("Published reflection update.");
 }
 
+function publishCodeState(code, source) {
+  if (!client || !isConnected) return;
+  const payload = JSON.stringify({
+    code: code || "",
+    source: source || "dashboard2",
+    updated_at: new Date().toISOString()
+  });
+  client.publish(MQTT_CODE_STATE_TOPIC, payload, { retain: true });
+  logLine("Published retained code state.");
+}
+
+function applyReflectionMessage(msg) {
+  if (!msg) return;
+  try {
+    const obj = JSON.parse(msg);
+    if (typeof obj.description === "string") {
+      lastDescription = obj.description;
+      descriptionDiv.html(lastDescription);
+    }
+    if (typeof obj.code === "string" && !getEditorValue().trim()) {
+      setEditorValue(obj.code);
+      refreshPreview();
+    }
+    logLine("Loaded retained reflection.");
+  } catch (err) {
+    logLine("Reflection parse error: " + (err && err.message ? err.message : err));
+  }
+}
+
+function applyCodeStateMessage(msg) {
+  if (!msg) return;
+  try {
+    const obj = JSON.parse(msg);
+    if (typeof obj.code !== "string") return;
+    if (getEditorValue() !== obj.code) {
+      setEditorValue(obj.code);
+      refreshPreview();
+    }
+    logLine("Loaded retained code state.");
+  } catch (err) {
+    logLine("Code state parse error: " + (err && err.message ? err.message : err));
+  }
+}
+
 function cmdGetCode() {
   pendingGetCode = true;
   lastRequestId++;
@@ -349,15 +458,21 @@ function cmdGetCode() {
 }
 
 function cmdRunNow() {
-  publishJsonLine({ cmd: "run_now", code: getEditorValue() });
+  const code = getEditorValue();
+  publishJsonLine({ cmd: "run_now", code });
+  publishCodeState(code, "run_now");
 }
 
 function cmdSetCode() {
-  publishJsonLine({ cmd: "set_code", code: getEditorValue() });
+  const code = getEditorValue();
+  publishJsonLine({ cmd: "set_code", code });
+  publishCodeState(code, "set_code");
 }
 
 function cmdRunAndStore() {
-  publishJsonLine({ cmd: "run_and_store", code: getEditorValue() });
+  const code = getEditorValue();
+  publishJsonLine({ cmd: "run_and_store", code });
+  publishCodeState(code, "run_and_store");
 }
 
 function cmdReboot() {
@@ -398,8 +513,10 @@ async function generateWrenchAndRun() {
 
     setEditorValue(out.wrench_code);
     lastPromptText = md;
+    refreshPreview();
     publishJsonLine({ cmd: "run_now", code: out.wrench_code });
     publishReflectionUpdate(out.description, out.wrench_code);
+    publishCodeState(out.wrench_code, "generate");
     logLine("Sent run_now with generated code (" + out.wrench_code.length + " chars).");
 
     if (automationEnabled) {
@@ -636,6 +753,8 @@ function tryAutoFillEditorFromGetCode(msg) {
     const obj = JSON.parse(msg);
     if (obj.ok === true && typeof obj.code === "string") {
       setEditorValue(obj.code);
+      refreshPreview();
+      publishCodeState(obj.code, "get_code");
       pendingGetCode = false;
       logLine("Loaded code into editor (" + obj.code.length + " chars).");
     }
@@ -667,8 +786,10 @@ async function autoFixWrenchAndRun(errText) {
     const fixed = await openaiFixWrenchFromError(getEditorValue(), errText);
     if (!fixed || !fixed.wrench_code) throw new Error("No wrench_code returned from fixer.");
     setEditorValue(fixed.wrench_code);
+    refreshPreview();
     if (fixed.description) logLine(fixed.description);
     publishJsonLine({ cmd: "run_now", code: fixed.wrench_code });
+    publishCodeState(fixed.wrench_code, "auto_fix");
     logLine("Sent run_now with fixed code.");
   } catch (e) {
     logLine("Auto-fix failed: " + (e && e.message ? e.message : e));
@@ -837,7 +958,9 @@ function createLayout() {
   consoleSectionEl = createSection(editorColumnEl, "console", "Console");
   reflectionSectionEl = createSection(infoColumnEl, "third", "Reflection");
   metricsSectionEl = createSection(infoColumnEl, "third", "Device Info");
-  emptySectionEl = createSection(infoColumnEl, "third", "");
+  emptySectionEl = createSection(infoColumnEl, "third", "Preview");
+  metricsSectionEl.addClass("device-info");
+  emptySectionEl.addClass("preview-section");
 }
 
 function createSection(parentEl, kind, title) {
@@ -855,7 +978,7 @@ function createSection(parentEl, kind, title) {
 }
 
 function computeSidebarWidth() {
-  return 320;
+  return 224;
 }
 
 function initAceEditor() {
@@ -870,6 +993,9 @@ function initAceEditor() {
     tabSize: 2,
     useSoftTabs: true
   });
+  aceEditor.session.on("change", () => {
+    refreshPreviewSoon();
+  });
 }
 
 function getEditorValue() {
@@ -881,6 +1007,24 @@ function setEditorValue(value) {
   if (aceEditor) {
     aceEditor.setValue(value || "", -1);
   }
+}
+
+function setupPreview() {
+  previewController = new WrenchPreviewController(previewDiv);
+  refreshPreview();
+}
+
+function refreshPreviewSoon() {
+  if (previewRefreshTimer) clearTimeout(previewRefreshTimer);
+  previewRefreshTimer = setTimeout(() => {
+    previewRefreshTimer = null;
+    refreshPreview();
+  }, 180);
+}
+
+function refreshPreview() {
+  if (!previewController) return;
+  previewController.setSource(getEditorValue());
 }
 
 function maybeUpdateMetricsFromConsoleLine(line) {
@@ -927,4 +1071,475 @@ function formatBytes(bytes) {
   if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MB";
   if (n >= 1024) return Math.round(n / 1024) + " KB";
   return String(n) + " B";
+}
+
+const PREVIEW_TUBE_ENDPOINTS = [
+  [{ x: -77.75, y: -38.784, z: -54.848 }, { x: 77.75, y: -38.784, z: -54.848 }],
+  [{ x: 86.375, y: -38.784, z: -39.909 }, { x: 8.625, y: -38.784, z: 94.758 }],
+  [{ x: -8.625, y: -38.784, z: 94.758 }, { x: -86.375, y: -38.784, z: -39.909 }],
+  [{ x: -86.375, y: -24.699, z: -49.869 }, { x: -8.625, y: 102.266, z: -4.98 }],
+  [{ x: 8.625, y: 102.266, z: -4.98 }, { x: 86.375, y: -24.699, z: -49.869 }],
+  [{ x: 0.0, y: -24.699, z: 99.737 }, { x: 0.0, y: 102.266, z: 9.959 }]
+];
+
+class WrenchPreviewController {
+  constructor(hostDiv) {
+    this.hostDiv = hostDiv;
+    this.runtime = null;
+    this.instance = null;
+    this.lastSource = "";
+    this.error = "";
+    this.loopStarted = false;
+    this.startLoop();
+  }
+
+  setSource(source) {
+    const next = String(source || "");
+    if (next === this.lastSource) return;
+    this.lastSource = next;
+    this.compile(next);
+  }
+
+  compile(source) {
+    this.error = "";
+    try {
+      this.runtime = new WrenchPreviewRuntime();
+      const translated = translateWrenchToJs(source);
+      const scope = this.runtime.createScope();
+      const factory = new Function(
+        "scope",
+        `with(scope){ ${translated}\nreturn { setup: (typeof setup === "function") ? setup : null, tick: (typeof tick === "function") ? tick : null }; }`
+      );
+      this.instance = factory(scope);
+      if (this.instance.setup) this.instance.setup();
+      this.render();
+    } catch (err) {
+      this.instance = null;
+      this.runtime = null;
+      this.error = err && err.message ? err.message : String(err);
+      this.renderError();
+    }
+  }
+
+  startLoop() {
+    if (this.loopStarted) return;
+    this.loopStarted = true;
+    const step = () => {
+      if (this.instance && this.instance.tick && this.runtime) {
+        try {
+          this.instance.tick();
+          this.runtime.sdf_render();
+          this.render();
+        } catch (err) {
+          this.error = err && err.message ? err.message : String(err);
+          this.instance = null;
+          this.runtime = null;
+          this.renderError();
+        }
+      }
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  render() {
+    if (!this.runtime) {
+      this.renderError();
+      return;
+    }
+    this.hostDiv.html(renderPreviewSvg(this.runtime.getTubeSegmentHexColors()));
+  }
+
+  renderError() {
+    this.hostDiv.html(`<div class="preview-error">${escapeHtml(this.error || "Preview unavailable")}</div>`);
+  }
+}
+
+class WrenchPreviewRuntime {
+  constructor() {
+    this.startMs = performance.now();
+    this.brightness = 255;
+    this.shapes = [];
+    this.palettes = {};
+    this.tubeColors = Array.from({ length: 6 }, () => ({ r: 0, g: 0, b: 0 }));
+    this.directTubeTouched = Array.from({ length: 6 }, () => false);
+    this.directAccum = Array.from({ length: 6 }, () => ({ r: 0, g: 0, b: 0, count: 0, maxR: 0, maxG: 0, maxB: 0 }));
+    this.noiseSeedValue = 1;
+  }
+
+  createScope() {
+    const runtime = this;
+    return {
+      STRIPS: 6,
+      TUBES: 6,
+      TOTAL_LEDS: 5352,
+      math: Math,
+      int: (v) => Math.trunc(Number(v) || 0),
+      millis: () => runtime.millis(),
+      leds_begin: () => 1,
+      leds_set_brightness: (b) => { runtime.brightness = Number(b) || 0; return 0; },
+      leds_clear: () => runtime.leds_clear(),
+      leds_set_pixel: (...args) => runtime.leds_set_pixel(...args),
+      leds_show: () => runtime.leds_show(),
+      sdf_set_count: (n) => runtime.sdf_set_count(n),
+      sdf_palette_hsv3: (...args) => runtime.sdf_palette_hsv3(...args),
+      sdf_set_sphere: (...args) => runtime.sdf_set_sphere(...args),
+      sdf_set_palette: (...args) => runtime.sdf_set_palette(...args),
+      sdf_set_material: (...args) => runtime.sdf_set_material(...args),
+      sdf_set_tex_time: (...args) => runtime.sdf_set_tex_time(...args),
+      sdf_render: () => runtime.sdf_render(),
+      noise_seed: (seed) => runtime.noise_seed(seed),
+      randomSeed: (seed) => runtime.randomSeed(seed),
+      simplex3: (x, y, z) => runtime.simplex3(x, y, z),
+      simplex3_01: (x, y, z) => runtime.simplex3_01(x, y, z),
+      tube_lerp: (tube, t01, which) => runtime.tube_lerp(tube, t01, which),
+      print: () => 0,
+      println: () => 0
+    };
+  }
+
+  millis() {
+    return performance.now() - this.startMs;
+  }
+
+  leds_clear() {
+    this.tubeColors = Array.from({ length: 6 }, () => ({ r: 0, g: 0, b: 0 }));
+    this.directTubeTouched = Array.from({ length: 6 }, () => false);
+    this.directAccum = Array.from({ length: 6 }, () => ({ r: 0, g: 0, b: 0, count: 0, maxR: 0, maxG: 0, maxB: 0 }));
+    return 0;
+  }
+
+  leds_set_pixel(...args) {
+    if (args.length >= 5) {
+      const strip = clampIndex(args[0], 6);
+      this.addDirectPixel(strip, args[2], args[3], args[4]);
+    } else if (args.length >= 4) {
+      const perTube = 5352 / 6;
+      const strip = clampIndex(Math.floor((Number(args[0]) || 0) / perTube), 6);
+      this.addDirectPixel(strip, args[1], args[2], args[3]);
+    }
+    return 0;
+  }
+
+  addDirectPixel(strip, r, g, b) {
+    const bucket = this.directAccum[strip];
+    const rr = Number(r) || 0;
+    const gg = Number(g) || 0;
+    const bb = Number(b) || 0;
+    if (rr > 0 || gg > 0 || bb > 0) {
+      bucket.r += rr;
+      bucket.g += gg;
+      bucket.b += bb;
+      bucket.count += 1;
+      bucket.maxR = Math.max(bucket.maxR, rr);
+      bucket.maxG = Math.max(bucket.maxG, gg);
+      bucket.maxB = Math.max(bucket.maxB, bb);
+    }
+    this.directTubeTouched[strip] = true;
+  }
+
+  leds_show() {
+    for (let i = 0; i < 6; i++) {
+      const bucket = this.directAccum[i];
+      if (!bucket.count) {
+        this.tubeColors[i] = { r: 0, g: 0, b: 0 };
+        continue;
+      }
+      const avg = {
+        r: bucket.r / bucket.count,
+        g: bucket.g / bucket.count,
+        b: bucket.b / bucket.count
+      };
+      const visible = {
+        r: Math.max(avg.r, bucket.maxR * 0.55),
+        g: Math.max(avg.g, bucket.maxG * 0.55),
+        b: Math.max(avg.b, bucket.maxB * 0.55)
+      };
+      this.tubeColors[i] = applyBrightness({
+        r: visible.r,
+        g: visible.g,
+        b: visible.b
+      }, this.brightness);
+    }
+    return 0;
+  }
+
+  sdf_set_count(n) {
+    this.shapes.length = Math.max(0, Math.floor(Number(n) || 0));
+    return 0;
+  }
+
+  sdf_palette_hsv3(id, h1, s1, v1, h2, s2, v2, h3, s3, v3) {
+    this.palettes[id] = [
+      hsvToRgb(h1, s1, v1),
+      hsvToRgb(h2, s2, v2),
+      hsvToRgb(h3, s3, v3)
+    ];
+    return 0;
+  }
+
+  sdf_set_sphere(i, x, y, z, r, hue, sat, val, alpha) {
+    this.shapes[i] = {
+      type: "sphere",
+      x: Number(x) || 0,
+      y: Number(y) || 0,
+      z: Number(z) || 0,
+      r: Math.max(1, Number(r) || 1),
+      color: hsvToRgb(hue, sat, val),
+      alpha: Number(alpha) || 0.6,
+      paletteId: null
+    };
+    return 0;
+  }
+
+  sdf_set_palette(i, paletteId) {
+    if (this.shapes[i]) this.shapes[i].paletteId = paletteId;
+    return 0;
+  }
+
+  sdf_set_material() {
+    return 0;
+  }
+
+  noise_seed(seed) {
+    this.noiseSeedValue = Number(seed) || 1;
+    if (typeof noiseSeed === "function") noiseSeed(this.noiseSeedValue);
+    return 0;
+  }
+
+  randomSeed(seed) {
+    this.noiseSeedValue = Number(seed) || 1;
+    if (typeof randomSeed === "function") randomSeed(this.noiseSeedValue);
+    return 0;
+  }
+
+  sdf_set_tex_time() {
+    return 0;
+  }
+
+  simplex3(x, y, z) {
+    return this.simplex3_01(x, y, z) * 2 - 1;
+  }
+
+  simplex3_01(x, y, z) {
+    if (typeof noise === "function") {
+      const seedOffset = this.noiseSeedValue * 0.001;
+      return noise(
+        (Number(x) || 0) + seedOffset,
+        (Number(y) || 0) + seedOffset * 2,
+        (Number(z) || 0) + seedOffset * 3
+      );
+    }
+    const n = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719 + this.noiseSeedValue * 0.1234) * 43758.5453;
+    return n - Math.floor(n);
+  }
+
+  tube_lerp(tube, t01, which) {
+    const pair = PREVIEW_TUBE_ENDPOINTS[clampIndex(tube, 6)] || PREVIEW_TUBE_ENDPOINTS[0];
+    const t = Math.max(0, Math.min(1, Number(t01) || 0));
+    const p = {
+      x: pair[0].x + (pair[1].x - pair[0].x) * t,
+      y: pair[0].y + (pair[1].y - pair[0].y) * t,
+      z: pair[0].z + (pair[1].z - pair[0].z) * t
+    };
+    if (which === 1) return p.y;
+    if (which === 2) return p.z;
+    return p.x;
+  }
+
+  sdf_render() {
+    for (let t = 0; t < 6; t++) {
+      if (this.directTubeTouched[t]) continue;
+
+      let accum = { r: 0, g: 0, b: 0 };
+      for (let s = 0; s < 12; s++) {
+        const u = s / 11;
+        const p = this.samplePoint(t, u);
+        const c = this.sampleSceneAt(p.x, p.y, p.z);
+        accum.r += c.r;
+        accum.g += c.g;
+        accum.b += c.b;
+      }
+      this.tubeColors[t] = applyBrightness({
+        r: accum.r / 12,
+        g: accum.g / 12,
+        b: accum.b / 12
+      }, this.brightness);
+    }
+    return 0;
+  }
+
+  samplePoint(tube, u) {
+    return {
+      x: this.tube_lerp(tube, u, 0),
+      y: this.tube_lerp(tube, u, 1),
+      z: this.tube_lerp(tube, u, 2)
+    };
+  }
+
+  sampleSceneAt(x, y, z) {
+    let accum = { r: 0, g: 0, b: 0 };
+    for (const shape of this.shapes) {
+      if (!shape) continue;
+      const dx = x - shape.x;
+      const dy = y - shape.y;
+      const dz = z - shape.z;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const falloff = Math.max(0, 1 - d / shape.r);
+      if (falloff <= 0) continue;
+      const c = this.pickShapeColor(shape, falloff);
+      const strength = falloff * Math.max(0.18, shape.alpha);
+      accum.r += c.r * strength;
+      accum.g += c.g * strength;
+      accum.b += c.b * strength;
+    }
+    return {
+      r: Math.min(255, accum.r),
+      g: Math.min(255, accum.g),
+      b: Math.min(255, accum.b)
+    };
+  }
+
+  pickShapeColor(shape, falloff) {
+    if (!shape.paletteId || !this.palettes[shape.paletteId]) return shape.color;
+    const pal = this.palettes[shape.paletteId];
+    const idx = Math.max(0, Math.min(2, Math.floor(falloff * 2.99)));
+    return mixRgb(shape.color, pal[idx], 0.55);
+  }
+
+  getTubeHexColors() {
+    return this.tubeColors.map((c) => rgbToHex(c));
+  }
+
+  getTubeSegmentHexColors() {
+    const segmentsPerTube = 40;
+    const out = [];
+    for (let tube = 0; tube < 6; tube++) {
+      const row = [];
+      if (this.directTubeTouched[tube]) {
+        const hex = rgbToHex(this.tubeColors[tube]);
+        for (let s = 0; s < segmentsPerTube; s++) row.push(hex);
+        out.push(row);
+        continue;
+      }
+
+      for (let s = 0; s < segmentsPerTube; s++) {
+        const u0 = s / segmentsPerTube;
+        const u1 = (s + 1) / segmentsPerTube;
+        const c0 = this.sampleSceneAtTube(tube, u0 + (u1 - u0) * 0.25);
+        const c1 = this.sampleSceneAtTube(tube, u0 + (u1 - u0) * 0.75);
+        row.push(rgbToHex(applyBrightness({
+          r: (c0.r + c1.r) * 0.5,
+          g: (c0.g + c1.g) * 0.5,
+          b: (c0.b + c1.b) * 0.5
+        }, this.brightness)));
+      }
+      out.push(row);
+    }
+    return out;
+  }
+
+  sampleSceneAtTube(tube, u) {
+    const p = this.samplePoint(tube, u);
+    return this.sampleSceneAt(p.x, p.y, p.z);
+  }
+}
+
+function translateWrenchToJs(src) {
+  let out = String(src || "");
+  out = out.replace(/\bvar\s+([A-Za-z_]\w*)\[\]\s*;/g, "var $1 = [];");
+  out = out.replace(/math::/g, "math.");
+  out = out.replace(/\(int\)\s*\(([^)]+)\)/g, "int($1)");
+  return out;
+}
+
+function hsvToRgb(h, s, v) {
+  const hh = ((((Number(h) || 0) % 256) + 256) % 256) / 255 * 360;
+  const ss = Math.max(0, Math.min(1, (Number(s) || 0) / 255));
+  const vv = Math.max(0, Math.min(1, (Number(v) || 0) / 255));
+  const c = vv * ss;
+  const x = c * (1 - Math.abs(((hh / 60) % 2) - 1));
+  const m = vv - c;
+  let r = 0, g = 0, b = 0;
+  if (hh < 60) { r = c; g = x; }
+  else if (hh < 120) { r = x; g = c; }
+  else if (hh < 180) { g = c; b = x; }
+  else if (hh < 240) { g = x; b = c; }
+  else if (hh < 300) { r = x; b = c; }
+  else { r = c; b = x; }
+  return {
+    r: Math.round((r + m) * 255),
+    g: Math.round((g + m) * 255),
+    b: Math.round((b + m) * 255)
+  };
+}
+
+function mixRgb(a, b, t) {
+  const k = Math.max(0, Math.min(1, t));
+  return {
+    r: a.r + (b.r - a.r) * k,
+    g: a.g + (b.g - a.g) * k,
+    b: a.b + (b.b - a.b) * k
+  };
+}
+
+function applyBrightness(color, brightness) {
+  const k = Math.max(0, Math.min(1, (Number(brightness) || 0) / 255));
+  const boost = 0.55 + 0.9 * k;
+  return {
+    r: Math.round(Math.min(255, (color.r || 0) * boost)),
+    g: Math.round(Math.min(255, (color.g || 0) * boost)),
+    b: Math.round(Math.min(255, (color.b || 0) * boost))
+  };
+}
+
+function rgbToHex(c) {
+  return "#" + [c.r, c.g, c.b]
+    .map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function clampIndex(v, max) {
+  return Math.max(0, Math.min(max - 1, Math.floor(Number(v) || 0)));
+}
+
+function renderPreviewSvg(segmentColors) {
+  const tubes = [
+    { x1: 75, y1: 195, x2: 245, y2: 195, colors: segmentColors[0] || [] },
+    { x1: 75, y1: 195, x2: 160, y2: 60, colors: segmentColors[3] || [] },
+    { x1: 245, y1: 195, x2: 160, y2: 60, colors: segmentColors[4] || [] },
+    { x1: 245, y1: 195, x2: 160, y2: 245, colors: segmentColors[1] || [] },
+    { x1: 160, y1: 245, x2: 75, y2: 195, colors: segmentColors[2] || [] },
+    { x1: 160, y1: 245, x2: 160, y2: 60, colors: segmentColors[5] || [] }
+  ];
+  const lines = tubes.map((tube) => renderSegmentedTube(tube.x1, tube.y1, tube.x2, tube.y2, tube.colors)).join("");
+  return `
+    <svg viewBox="0 0 320 260" width="100%" height="100%" aria-label="Pyramid preview">
+      <rect x="0" y="0" width="320" height="260" fill="#000000" rx="10" />
+      ${lines}
+    </svg>
+  `;
+}
+
+function renderSegmentedTube(x1, y1, x2, y2, colors) {
+  const segments = Math.max(1, colors.length || 40);
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const gap = 0.06;
+  let out = "";
+  for (let i = 0; i < segments; i++) {
+    const t0 = i / segments;
+    const t1 = (i + 1) / segments;
+    const a = t0 + (t1 - t0) * gap;
+    const b = t1 - (t1 - t0) * gap;
+    out += `<line x1="${x1 + dx * a}" y1="${y1 + dy * a}" x2="${x1 + dx * b}" y2="${y1 + dy * b}" stroke="${colors[i] || "#222"}" stroke-width="18" stroke-linecap="round" />`;
+  }
+  return out;
+}
+
+function escapeHtml(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
