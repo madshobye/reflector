@@ -17,6 +17,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
+const DASHBOARD2_VERSION = "v2";
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -88,6 +89,7 @@ let sidebarIntervalDiv = null;
 let sidebarModelSelect = null;
 let sidebarPyrSelect = null;
 let sidebarAuthButton = null;
+let sidebarVersionDiv = null;
 let sidebarShiftrLink = null;
 let sidebarReflectionLink = null;
 let sidebarPromptLink = null;
@@ -162,6 +164,10 @@ function createSidebarControls() {
   const wrap = createDiv("");
   wrap.parent(sidebarEl);
   wrap.class("sidebar-controls");
+
+  sidebarVersionDiv = createDiv("Version " + DASHBOARD2_VERSION);
+  sidebarVersionDiv.parent(wrap);
+  sidebarVersionDiv.class("sidebar-version");
 
   const buttonSpecs = [
     ["connectToggle", "Connect", () => {

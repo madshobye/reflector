@@ -59,6 +59,16 @@ body.preview-mode {
   scrollbar-gutter: stable;
 }
 
+.sidebar-version {
+  color: #9a9a9a;
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding-left: 2px;
+  margin-bottom: 2px;
+}
+
 .sidebar-button,
 .sidebar-select,
 .sidebar-status,
