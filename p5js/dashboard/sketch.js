@@ -435,7 +435,7 @@ async function generateWrenchAndRun() {
 
     // Put code in editor
     editorTA.value(out.wrench_code);
-    lastPromptText = md;
+    lastPromptText = out.description || "";
 
     // Run now (do NOT store)
     publishJsonLine({ cmd: "run_now", code: out.wrench_code });

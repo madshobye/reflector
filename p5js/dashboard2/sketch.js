@@ -1321,7 +1321,7 @@ async function generateWrenchAndRun() {
     }
 
     setEditorValue(out.wrench_code);
-    lastPromptText = md;
+    lastPromptText = out.description || "";
     refreshPreview();
     publishJsonLine({ cmd: "run_now", code: out.wrench_code });
     publishReflectionUpdate(out.description, out.wrench_code);
@@ -2497,6 +2497,11 @@ class WrenchPreviewRuntime {
       SDF_BOX: 1,
       SDF_UNITS: "cm",
       SDF_STEP_MM: 0.25,
+      Vec3: function Vec3() {
+        this.x = 0;
+        this.y = 0;
+        this.z = 0;
+      },
       math: Math,
       int: (v) => Math.trunc(Number(v) || 0),
       millis: () => runtime.millis(),
