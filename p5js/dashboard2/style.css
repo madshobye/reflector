@@ -121,6 +121,18 @@ body.preview-mode {
   color: #bcbcbc;
 }
 
+.sidebar-link {
+  margin-top: 2px;
+  padding-left: 10px;
+  color: #f5f1e8;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.sidebar-link:hover {
+  color: #ffffff;
+}
+
 #content-panel {
   flex: 1 1 auto;
   min-width: 0;

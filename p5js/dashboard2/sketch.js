@@ -84,6 +84,7 @@ let sidebarIntervalDiv = null;
 let sidebarModelSelect = null;
 let sidebarPyrSelect = null;
 let sidebarAuthButton = null;
+let sidebarShiftrLink = null;
 let sidebarButtons = {};
 let sidebarSyncTimer = null;
 
@@ -245,6 +246,10 @@ function createSidebarControls() {
   sidebarIntervalDiv = createDiv("");
   sidebarIntervalDiv.parent(wrap);
   sidebarIntervalDiv.class("sidebar-meta");
+
+  sidebarShiftrLink = createA("https://reflector.cloud.shiftr.io/", "Open Shiftr", "_blank");
+  sidebarShiftrLink.parent(wrap);
+  sidebarShiftrLink.class("sidebar-link");
 }
 
 function syncSidebarControls() {
