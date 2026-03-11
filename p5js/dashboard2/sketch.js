@@ -17,7 +17,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v32";
+const DASHBOARD2_VERSION = "v33";
 const TOTAL_NEWS_ITEMS = 10;
 const RSS_CACHE_TTL_MS = 20 * 60 * 1000;
 const DOC_MD_URL =
@@ -681,7 +681,7 @@ function rememberPromptReflection(text) {
   const next = String(text || "").trim();
   if (!next) return;
   if (lastPromptHistory[0] === next) return;
-  lastPromptHistory = [next, ...lastPromptHistory.filter((item) => item !== next)].slice(0, 10);
+  lastPromptHistory = [next, ...lastPromptHistory.filter((item) => item !== next)].slice(0, 5);
 }
 
 function lastPromptHistoryText() {
