@@ -17,7 +17,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v24";
+const DASHBOARD2_VERSION = "v27";
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -1149,7 +1149,24 @@ function publishJsonLine(obj) {
   }
   const payload = JSON.stringify(obj) + "\n";
   client.publish(mqttCmdTopic(), payload);
-  logLine(">>> " + payload.trim());
+  logLine(formatOutgoingCommandForConsole(obj));
+}
+
+function formatOutgoingCommandForConsole(obj) {
+  if (!obj || typeof obj !== "object") return ">>> " + String(obj ?? "");
+  const cmd = typeof obj.cmd === "string" ? obj.cmd : "cmd";
+  if (typeof obj.code === "string") {
+    return `>>> ${cmd} (${obj.code.length} chars)`;
+  }
+  return ">>> " + JSON.stringify(obj);
+}
+
+function shouldBroadcastConsoleLine(line) {
+  const s = String(line || "");
+  if (!s) return false;
+  if (s.startsWith("[remote] ")) return false;
+  if (s.includes('"code":"')) return false;
+  return true;
 }
 
 function publishReflectionUpdate(reflection, code, designRationale, location) {
@@ -1427,12 +1444,92 @@ function logSummarizedEvtMessage(topic, msg) {
   if (!msg || msg[0] !== "{") return false;
   try {
     const obj = JSON.parse(msg);
-    if (obj && obj.ok === true && typeof obj.code === "string") {
-      logLine(`${topic}: code received (${obj.code.length} chars)`);
-      return true;
-    }
+    if (consumeEvtObjectSilently(obj)) return true;
+    const formatted = formatEvtObjectForConsole(topic, obj);
+    if (!formatted) return false;
+    logLine(formatted);
+    return true;
   } catch (_) {}
   return false;
+}
+
+function consumeEvtObjectSilently(obj) {
+  if (!obj || typeof obj !== "object") return false;
+  if (typeof obj.event === "string" && obj.event in deviceMetrics) {
+    const val = obj.fps ?? obj.bytes ?? obj.words;
+    if (typeof val !== "undefined") {
+      deviceMetrics[obj.event] = formatMetricValue(obj.event, val);
+      renderMetrics();
+      return true;
+    }
+  }
+  if (obj.dbg === "code_rx") {
+    return true;
+  }
+  return false;
+}
+
+function formatEvtObjectForConsole(topic, obj) {
+  if (!obj || typeof obj !== "object") return "";
+
+  if (obj.ok === true && typeof obj.code === "string") {
+    return `${topic}: code received (${obj.code.length} chars)`;
+  }
+
+  if (obj.ok === false && typeof obj.err === "string") {
+    const lower = obj.err.toLowerCase();
+    if (lower.startsWith("wrench warn:")) {
+      return `${topic}: warning: ${obj.err.slice("wrench warn:".length).trim()}`;
+    }
+    if (lower.startsWith("wrench compile:")) {
+      return `${topic}: compile error: ${obj.err.slice("wrench compile:".length).trim()}`;
+    }
+    return `${topic}: error: ${obj.err}`;
+  }
+
+  if (obj.ok === true && typeof obj.msg === "string") {
+    return `${topic}: ${obj.msg}`;
+  }
+
+  if (typeof obj.event === "string") {
+    const valueKey = Object.keys(obj).find((k) => k !== "event");
+    if (!valueKey) return `${topic}: event ${obj.event}`;
+    const valueLabel = formatEvtValueKey(valueKey);
+    return `${topic}: ${obj.event}${valueLabel ? " " + valueLabel : ""} ${obj[valueKey]}`;
+  }
+
+  if (
+    obj.ok === true &&
+    typeof obj.hasProgram === "boolean" &&
+    typeof obj.tickExists === "boolean" &&
+    typeof obj.onMsgExists === "boolean"
+  ) {
+    const parts = [
+      `program ${obj.hasProgram ? "loaded" : "empty"}`,
+      `tick ${obj.tickExists ? "yes" : "no"}`,
+      `onMsg ${obj.onMsgExists ? "yes" : "no"}`
+    ];
+    if (typeof obj.brightness !== "undefined") parts.push(`brightness ${obj.brightness}`);
+    if (typeof obj.codeBytes !== "undefined") parts.push(`code ${obj.codeBytes}B`);
+    if (typeof obj.spheres !== "undefined") parts.push(`shapes ${obj.spheres}`);
+    return `${topic}: ${parts.join(" · ")}`;
+  }
+
+  if (typeof obj.dbg === "string") {
+    const parts = [obj.dbg];
+    if (typeof obj.len !== "undefined") parts.push(`len ${obj.len}`);
+    if (typeof obj.fnv !== "undefined") parts.push(`fnv ${obj.fnv}`);
+    return `${topic}: ${parts.join(" · ")}`;
+  }
+
+  return "";
+}
+
+function formatEvtValueKey(key) {
+  if (key === "bytes") return "bytes";
+  if (key === "words") return "words";
+  if (key === "value") return "";
+  return key;
 }
 
 function cmdGetCode() {
@@ -1970,13 +2067,14 @@ function appendConsoleLine(s, shouldBroadcast = true) {
   const consumedByMetrics = maybeUpdateMetricsFromConsoleLine(s);
   if (consumedByMetrics) return;
 
+  const line = String(s);
   const prev = consoleDiv.html();
   let lines = prev ? prev.split("\n") : [];
-  lines.push(String(s));
+  lines.push(line);
   lines = maybeRotateConsole(lines);
   consoleDiv.html(lines.join("\n"));
   consoleDiv.elt.scrollTop = consoleDiv.elt.scrollHeight;
-  if (shouldBroadcast) publishConsoleLine(s);
+  if (shouldBroadcast && shouldBroadcastConsoleLine(line)) publishConsoleLine(line);
 }
 
 function logLine(s) {
