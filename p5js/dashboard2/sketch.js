@@ -9,7 +9,7 @@ const MQTT_CMD_TOPIC = `/glow_dk_cph/${PYR_ID}/cmd`;
 const MQTT_EVT_TOPIC = `/glow_dk_cph/${PYR_ID}/evt`;
 const MQTT_REFLECTION_TOPIC = `/glow_dk_cph/${PYR_ID}/reflection`;
 const MQTT_CODE_STATE_TOPIC = `/glow_dk_cph/${PYR_ID}/code_state`;
-const UI_PALETTE = ["#edae49", "#d1495b", "#00798c", "#30638e", "#003d5b"];
+const UI_PALETTE = ["#303030", "#383838", "#424242", "#4a4a4a", "#262626"];
 const DISPLAY_MODE_KEY = "dashboard2_display_mode";
 
 let autoFixEnabled = false;
@@ -64,14 +64,15 @@ let previewRefreshTimer = null;
 let displayMode = "preview";
 let modeToggleButton = null;
 let reflectionMeasureCanvas = null;
+let sidebarStatusDiv = null;
+let sidebarIntervalDiv = null;
+let sidebarButtons = {};
+let sidebarSyncTimer = null;
 
 async function setup() {
+  noCanvas();
   displayMode = loadDisplayMode();
   createLayout();
-  const sidebarW = computeSidebarWidth();
-  const c = createCanvas(sidebarW, windowHeight);
-  c.parent(sidebarEl);
-  textFont("monospace");
 
   try {
     OPENAI_API_KEY = storedDecrypt({ apiKeyEncryptedGpt });
@@ -80,9 +81,9 @@ async function setup() {
     statusText = "Missing encrypted key/password";
   }
 
+  createSidebarControls();
   createDomPanels();
   createModeToggleButton();
-  applyBaseUiStyle();
   initAceEditor();
 
   setEditorValue(defaultWrenchExample());
@@ -94,130 +95,12 @@ async function setup() {
   updateDomLayout();
   setupPreview();
   connectMQTT();
+  syncSidebarControls();
+  sidebarSyncTimer = window.setInterval(syncSidebarControls, 250);
 }
 
 function draw() {
-  if (displayMode === "preview") return;
-  background(0, 25, 42);
-  drawSidebar();
-}
-
-function drawSidebar() {
-  noStroke();
-  fill(0, 25, 42);
-  rect(0, 0, width, height);
-  fill(17, 50, 72);
-  rect(width - 1, 0, 1, height);
-
-  const sideMargin = 16;
-  const innerW = width - sideMargin * 2;
-  const innerX = sideMargin;
-  let y = 20;
-  const gap = 8;
-
-  uiText("Reflector Dashboard", {
-    x: innerX,
-    y,
-    width: innerW,
-    height: 32,
-    fontSize: 20,
-    textStyle: BOLD,
-    hAlign: "left",
-    bgColor: "transparent",
-    textColor: "#f4f7fb"
-  });
-  y += 32 + gap;
-
-  uiText("Status: " + statusText, {
-    x: innerX,
-    y,
-    width: innerW,
-    height: 32,
-    fontSize: 12,
-    textStyle: BOLD,
-    padding: 7,
-    bgColor: isConnected ? "#0f3f48" : "#4a1f30",
-    textColor: "#f4f7fb",
-    vAlign: "middle"
-  });
-  y += 32 + gap;
-
-  if (uiActionButton("Connect MQTT", !client, UI_PALETTE[2], innerX, y, innerW).clicked) connectMQTT();
-  y += 32 + gap;
-  if (uiActionButton("Disconnect", !!client, UI_PALETTE[1], innerX, y, innerW).clicked) disconnectMQTT();
-  y += 32 + gap;
-  if (uiActionButton("Get Code", isConnected, UI_PALETTE[3], innerX, y, innerW).clicked) cmdGetCode();
-  y += 32 + gap;
-  if (uiActionButton("Run Now", isConnected, UI_PALETTE[3], innerX, y, innerW).clicked) cmdRunNow();
-  y += 32 + gap;
-  if (uiActionButton("Store Only", isConnected, UI_PALETTE[3], innerX, y, innerW).clicked) cmdSetCode();
-  y += 32 + gap;
-  if (uiActionButton("Run + Store", isConnected, UI_PALETTE[3], innerX, y, innerW).clicked) cmdRunAndStore();
-  y += 32 + gap;
-  if (uiActionButton("Reboot", isConnected, UI_PALETTE[0], innerX, y, innerW).clicked) cmdReboot();
-  y += 32 + gap;
-  if (uiActionButton("Generate Wrench", isConnected && !generationInProgress, UI_PALETTE[1], innerX, y, innerW).clicked) {
-    generateWrenchAndRun();
-  }
-  y += 32 + gap;
-  if (uiActionButton(autoFixEnabled ? "Auto-fix: ON" : "Auto-fix: OFF", true, autoFixEnabled ? UI_PALETTE[2] : "#243847", innerX, y, innerW).clicked) {
-    autoFixEnabled = !autoFixEnabled;
-    logLine("Auto-fix is now " + (autoFixEnabled ? "ON" : "OFF"));
-  }
-  y += 32 + gap;
-  if (uiActionButton(automationEnabled ? "Automation: ON" : "Automation: OFF", isConnected && !generationInProgress, automationEnabled ? UI_PALETTE[0] : "#243847", innerX, y, innerW).clicked) {
-    toggleAutomation();
-  }
-  y += 32 + gap;
-  if (uiActionButton("Insert Example", true, UI_PALETTE[4], innerX, y, innerW).clicked) {
-    setEditorValue(defaultWrenchExample());
-    refreshPreview();
-  }
-  y += 32 + gap;
-  if (uiActionButton("Clear Console", true, UI_PALETTE[4], innerX, y, innerW).clicked) consoleDiv.html("");
-  y += 32 + gap;
-
-  uiText("Automation interval: " + Math.round(AUTOMATION_INTERVAL_MS / 1000) + "s", {
-    x: innerX,
-    y,
-    width: innerW,
-    height: 34,
-    bgColor: "#092333",
-    textColor: "#9db9c9"
-  });
-}
-
-function uiActionButton(label, enabled, activeColor, x, y, buttonWidth) {
-  return uiButton(label, {
-    x,
-    y,
-    width: buttonWidth,
-    height: 32,
-    fontSize: 13,
-    textStyle: BOLD,
-    padding: 7,
-    bgColor: enabled ? activeColor : "#173042",
-    textColor: enabled ? "#f7f9fb" : "#6f8796",
-    hover: { bgColor: enabled ? lightenHex(activeColor, 14) : "#173042" },
-    pressed: { bgColor: enabled ? darkenHex(activeColor, 14) : "#173042" }
-  });
-}
-
-function applyBaseUiStyle() {
-  uiSetBaseStyle({
-    common: {
-      fontSize: 15,
-      padding: 10,
-      rounding: 10,
-      bgColor: "#0c2432",
-      textColor: "#eaf0f4",
-      hover: { bgColor: "#133246" },
-      pressed: { bgColor: "#071a25" }
-    },
-    button: { height: 38 },
-    text: { height: 36 },
-    list: { x: 20, y: 20, width: 280, dir: "vertical" }
-  });
+  return;
 }
 
 function createDomPanels() {
@@ -229,7 +112,7 @@ function createDomPanels() {
   descriptionDiv = createDiv("");
   descriptionDiv.parent(reflectionSectionEl);
   descriptionDiv.class("panel-box");
-  styleLogPanel(descriptionDiv, "#0a1f2d");
+  styleLogPanel(descriptionDiv, "#000000");
 
   metricsDiv = createDiv("");
   metricsDiv.parent(metricsSectionEl);
@@ -249,7 +132,96 @@ function createDomPanels() {
   consoleDiv = createDiv("");
   consoleDiv.parent(consoleSectionEl);
   consoleDiv.class("panel-box");
-  styleLogPanel(consoleDiv, "#091520");
+  styleLogPanel(consoleDiv, "#000000");
+}
+
+function createSidebarControls() {
+  const wrap = createDiv("");
+  wrap.parent(sidebarEl);
+  wrap.class("sidebar-controls");
+
+  const buttonSpecs = [
+    ["connectToggle", "Connect", () => {
+      if (client) disconnectMQTT();
+      else connectMQTT();
+    }],
+    ["getCode", "Get Code", () => cmdGetCode()],
+    ["runNow", "Run Now", () => cmdRunNow()],
+    ["storeOnly", "Store Only", () => cmdSetCode()],
+    ["runStore", "Run + Store", () => cmdRunAndStore()],
+    ["reboot", "Reboot", () => cmdReboot()],
+    ["generate", "Generate Wrench", () => generateWrenchAndRun()],
+    ["autoFix", "Auto-fix: OFF", () => {
+      autoFixEnabled = !autoFixEnabled;
+      logLine("Auto-fix is now " + (autoFixEnabled ? "ON" : "OFF"));
+      syncSidebarControls();
+    }],
+    ["automation", "Automation: OFF", () => toggleAutomation()],
+    ["insertExample", "Insert Example", () => {
+      setEditorValue(defaultWrenchExample());
+      refreshPreview();
+    }],
+    ["clearConsole", "Clear Console", () => {
+      consoleDiv.html("");
+    }]
+  ];
+
+  for (const [key, label, handler] of buttonSpecs) {
+    const btn = createButton(label);
+    btn.parent(wrap);
+    btn.class("sidebar-button");
+    btn.mousePressed(handler);
+    sidebarButtons[key] = btn;
+  }
+
+  sidebarStatusDiv = createDiv("");
+  sidebarStatusDiv.parent(wrap);
+  sidebarStatusDiv.class("sidebar-status");
+
+  sidebarIntervalDiv = createDiv("");
+  sidebarIntervalDiv.parent(wrap);
+  sidebarIntervalDiv.class("sidebar-meta");
+}
+
+function syncSidebarControls() {
+  if (!sidebarStatusDiv) return;
+  sidebarStatusDiv.html("Status: " + statusText);
+  sidebarStatusDiv.removeClass("is-connected");
+  sidebarStatusDiv.removeClass("is-disconnected");
+  sidebarStatusDiv.addClass(isConnected ? "is-connected" : "is-disconnected");
+
+  updateSidebarButton("connectToggle", {
+    label: client ? "Disconnect" : "Connect",
+    disabled: false,
+    tone: client ? "mid" : "mid"
+  });
+  updateSidebarButton("getCode", { disabled: !isConnected, tone: isConnected ? "mid" : "off" });
+  updateSidebarButton("runNow", { disabled: !isConnected, tone: isConnected ? "mid" : "off" });
+  updateSidebarButton("storeOnly", { disabled: !isConnected, tone: isConnected ? "mid" : "off" });
+  updateSidebarButton("runStore", { disabled: !isConnected, tone: isConnected ? "mid" : "off" });
+  updateSidebarButton("reboot", { disabled: !isConnected, tone: isConnected ? "low" : "off" });
+  updateSidebarButton("generate", { disabled: !isConnected || generationInProgress, tone: isConnected && !generationInProgress ? "mid" : "off" });
+  updateSidebarButton("autoFix", { label: autoFixEnabled ? "Auto-fix: ON" : "Auto-fix: OFF", disabled: false, tone: autoFixEnabled ? "high" : "off" });
+  updateSidebarButton("automation", { label: automationEnabled ? "Automation: ON" : "Automation: OFF", disabled: !isConnected || generationInProgress, tone: automationEnabled ? "high" : (!isConnected || generationInProgress ? "off" : "off") });
+  updateSidebarButton("insertExample", { disabled: false, tone: "low" });
+  updateSidebarButton("clearConsole", { disabled: false, tone: "low" });
+
+  if (sidebarIntervalDiv) {
+    sidebarIntervalDiv.html("Automation interval: " + Math.round(AUTOMATION_INTERVAL_MS / 1000) + "s");
+  }
+}
+
+function updateSidebarButton(key, { label, disabled, tone }) {
+  const btn = sidebarButtons[key];
+  if (!btn) return;
+  if (typeof label === "string") btn.html(label);
+  if (disabled) btn.attribute("disabled", "");
+  else btn.removeAttribute("disabled");
+  btn.removeClass("tone-high");
+  btn.removeClass("tone-mid");
+  btn.removeClass("tone-low");
+  btn.removeClass("tone-off");
+  btn.addClass(`tone-${tone || "mid"}`);
 }
 
 function styleLogPanel(el, bg) {
@@ -260,7 +232,7 @@ function styleLogPanel(el, bg) {
   el.style("padding", "12px");
   el.style("background", bg);
   el.style("color", "#dce7ee");
-  el.style("border", "1px solid #18435e");
+  el.style("border", "0");
   el.style("border-radius", "10px");
 }
 
@@ -280,6 +252,7 @@ function setDisplayMode(nextMode) {
   } catch (_) {}
   applyDisplayMode();
   updateDomLayout();
+  syncSidebarControls();
 }
 
 function toggleDisplayMode() {
@@ -487,8 +460,6 @@ function previewGraphicsFontBounds(g, content, boxW) {
 }
 
 function updateDomLayout() {
-  const sidebarWidth = Math.max(1, sidebarEl.elt.clientWidth || 0);
-  resizeCanvas(sidebarWidth, windowHeight);
   if (aceEditor) aceEditor.resize();
   if (previewController) previewController.resize();
   updateReflectionTypography();
@@ -497,16 +468,19 @@ function updateDomLayout() {
 function connectMQTT() {
   if (!window.mqtt) {
     logLine("mqtt.min.js not loaded.");
+    syncSidebarControls();
     return;
   }
   if (client) {
     logLine("Already connected or connecting.");
+    syncSidebarControls();
     return;
   }
 
   const clientId = "portal-dashboard-" + Math.floor(Math.random() * 1e9);
   statusText = "Connecting MQTT...";
   logLine("Connecting MQTT as " + clientId + "...");
+  syncSidebarControls();
 
   client = mqtt.connect("wss://reflector:" + mqttKey + "@reflector.cloud.shiftr.io", {
     clientId,
@@ -519,6 +493,7 @@ function connectMQTT() {
     isConnected = true;
     statusText = "MQTT connected";
     logLine("MQTT connected.");
+    syncSidebarControls();
     client.subscribe(MQTT_EVT_TOPIC, (err) => {
       if (err) logLine("Subscribe error: " + err);
       else logLine("Subscribed: " + MQTT_EVT_TOPIC);
@@ -536,6 +511,7 @@ function connectMQTT() {
   client.on("reconnect", () => {
     statusText = "MQTT reconnecting";
     logLine("MQTT reconnecting...");
+    syncSidebarControls();
   });
 
   client.on("close", () => {
@@ -544,11 +520,13 @@ function connectMQTT() {
     logLine("MQTT closed.");
     client = null;
     clearAutomationTimer();
+    syncSidebarControls();
   });
 
   client.on("error", (err) => {
     statusText = "MQTT error";
     logLine("MQTT error: " + err);
+    syncSidebarControls();
   });
 
   client.on("message", (topic, message) => {
@@ -577,10 +555,12 @@ function disconnectMQTT() {
   statusText = "MQTT not connected";
   clearAutomationTimer();
   logLine("Disconnected.");
+  syncSidebarControls();
 }
 
 function toggleAutomation() {
   automationEnabled = !automationEnabled;
+  syncSidebarControls();
   if (!automationEnabled) {
     clearAutomationTimer();
     logLine("Automation is now OFF.");
@@ -601,6 +581,7 @@ function clearAutomationTimer() {
     clearTimeout(automationTimerId);
     automationTimerId = null;
   }
+  syncSidebarControls();
 }
 
 function scheduleNextAutomationRun() {
@@ -729,6 +710,7 @@ async function generateWrenchAndRun() {
   }
 
   generationInProgress = true;
+  syncSidebarControls();
   logLine("Fetching design doc (md)...");
 
   try {
@@ -765,6 +747,7 @@ async function generateWrenchAndRun() {
     if (automationEnabled) scheduleNextAutomationRun();
   } finally {
     generationInProgress = false;
+    syncSidebarControls();
   }
 }
 
@@ -1018,6 +1001,7 @@ function maybeAutoFixFromEvt(msg) {
 async function autoFixWrenchAndRun(errText) {
   if (!OPENAI_API_KEY || !client || !isConnected) return;
   autoFixInProgress = true;
+  syncSidebarControls();
   logLine("Auto-fix triggered...");
   try {
     const fixed = await openaiFixWrenchFromError(getEditorValue(), errText);
@@ -1032,6 +1016,7 @@ async function autoFixWrenchAndRun(errText) {
     logLine("Auto-fix failed: " + (e && e.message ? e.message : e));
   } finally {
     autoFixInProgress = false;
+    syncSidebarControls();
   }
 }
 
@@ -1196,6 +1181,7 @@ function createLayout() {
   reflectionSectionEl = createSection(infoColumnEl, "third", "Reflection");
   metricsSectionEl = createSection(infoColumnEl, "third", "Device Info");
   emptySectionEl = createSection(infoColumnEl, "third", "Preview");
+  consoleSectionEl.addClass("console-section");
   reflectionSectionEl.addClass("reflection-section");
   metricsSectionEl.addClass("device-info");
   emptySectionEl.addClass("preview-section");
@@ -1222,7 +1208,7 @@ function computeSidebarWidth() {
 function initAceEditor() {
   if (!window.ace || !editorEl) return;
   aceEditor = ace.edit(editorEl.elt);
-  aceEditor.setTheme("ace/theme/monokai");
+  aceEditor.setTheme("ace/theme/chaos");
   aceEditor.session.setMode("ace/mode/javascript");
   aceEditor.session.setUseWrapMode(true);
   aceEditor.setShowPrintMargin(false);
@@ -1415,10 +1401,18 @@ class WrenchPreview3D {
     this.segmentColors = Array.from({ length: 6 }, () => Array.from({ length: 40 }, () => "#000000"));
     this.error = "";
     this.reflectionText = "";
+    this.appliedCameraMode = null;
+    this.orbitStates = { preview: null, debug: null };
+    this.isDragging = false;
+    this.dragButton = "left";
+    this.lastMouseX = 0;
+    this.lastMouseY = 0;
+    this.pointerId = null;
     this.webglLayer = document.createElement("div");
     this.webglLayer.className = "preview-webgl";
     this.overlayLayer = document.createElement("div");
     this.overlayLayer.className = "preview-overlay";
+    this.overlayGraphics = null;
     this.hostDiv.elt.appendChild(this.webglLayer);
     this.hostDiv.elt.appendChild(this.overlayLayer);
     this.instance = new p5((p) => this.mountSketch(p), this.webglLayer);
@@ -1432,11 +1426,47 @@ class WrenchPreview3D {
       const c = p.createCanvas(width, height, p.WEBGL);
       c.parent(this.webglLayer);
       p.setAttributes("antialias", true);
+      const elt = c.elt;
+      elt.style.touchAction = "none";
+      elt.addEventListener("contextmenu", (e) => e.preventDefault());
+      elt.addEventListener("pointerdown", (e) => {
+        this.isDragging = true;
+        this.pointerId = e.pointerId;
+        this.dragButton = e.button === 2 ? "right" : "left";
+        this.lastMouseX = e.clientX;
+        this.lastMouseY = e.clientY;
+        elt.setPointerCapture?.(e.pointerId);
+      });
+      elt.addEventListener("pointermove", (e) => {
+        if (!this.isDragging || this.pointerId !== e.pointerId) return;
+        this.updateOrbitFromPointerDelta(e.clientX - this.lastMouseX, e.clientY - this.lastMouseY);
+        this.lastMouseX = e.clientX;
+        this.lastMouseY = e.clientY;
+      });
+      const releasePointer = (e) => {
+        if (this.pointerId !== null && e.pointerId !== undefined && this.pointerId !== e.pointerId) return;
+        this.isDragging = false;
+        this.pointerId = null;
+        this.saveOrbitState();
+      };
+      elt.addEventListener("pointerup", releasePointer);
+      elt.addEventListener("pointercancel", releasePointer);
+      elt.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        const state = this.getOrbitState(displayMode);
+        state.distance = constrain(state.distance * (1 + e.deltaY * 0.001), 120, 900);
+        this.saveOrbitState();
+      }, { passive: false });
+      this.restoreOrbitState(p, displayMode);
     };
 
     p.draw = () => {
-      p.background(0);
-      p.orbitControl(1.2, 1.2, 0.15);
+      if (this.appliedCameraMode !== displayMode) {
+        this.restoreOrbitState(p, displayMode);
+      }
+      this.applyOrbitCamera(p);
+      p.background("#000000");
+      this.drawHorizonBackground(p);
       p.noStroke();
 
       p.push();
@@ -1453,32 +1483,161 @@ class WrenchPreview3D {
     p.windowResized = () => this.resize();
   }
 
+  orbitStorageKey(mode) {
+    return `dashboard2_orbit_${mode}`;
+  }
+
+  defaultOrbitState(mode) {
+    return mode === "preview"
+      ? { yaw: 0.72, pitch: -0.56, distance: 430, targetX: 58, targetY: 8, targetZ: 0 }
+      : { yaw: 0.62, pitch: -0.48, distance: 330, targetX: 26, targetY: 6, targetZ: 0 };
+  }
+
+  cloneOrbitState(state) {
+    return {
+      yaw: Number(state?.yaw) || 0,
+      pitch: Number(state?.pitch) || 0,
+      distance: Number(state?.distance) || 250,
+      targetX: Number(state?.targetX) || 0,
+      targetY: Number(state?.targetY) || 0,
+      targetZ: Number(state?.targetZ) || 0
+    };
+  }
+
+  getOrbitState(mode) {
+    const key = mode === "debug" ? "debug" : "preview";
+    if (!this.orbitStates[key]) {
+      this.orbitStates[key] = this.defaultOrbitState(key);
+    }
+    return this.orbitStates[key];
+  }
+
+  applyOrbitCamera(p) {
+    const state = this.getOrbitState(this.appliedCameraMode || displayMode);
+    const cp = Math.cos(state.pitch);
+    const sp = Math.sin(state.pitch);
+    const cy = Math.cos(state.yaw);
+    const sy = Math.sin(state.yaw);
+    const eyeX = state.targetX + state.distance * cp * sy;
+    const eyeY = state.targetY + state.distance * sp;
+    const eyeZ = state.targetZ + state.distance * cp * cy;
+    p.camera(
+      eyeX, eyeY, eyeZ,
+      state.targetX, state.targetY, state.targetZ,
+      0, 1, 0
+    );
+  }
+
+  restoreOrbitState(p, mode) {
+    const key = mode === "debug" ? "debug" : "preview";
+    let restored = false;
+    try {
+      const raw = window.localStorage.getItem(this.orbitStorageKey(key));
+      if (raw) {
+        const state = JSON.parse(raw);
+        if (state && typeof state.yaw === "number") {
+          this.orbitStates[key] = this.cloneOrbitState(state);
+          restored = true;
+        }
+      }
+    } catch (_) {}
+    if (!restored) {
+      this.orbitStates[key] = this.defaultOrbitState(key);
+    }
+    this.appliedCameraMode = key;
+    this.applyOrbitCamera(p);
+  }
+
+  saveOrbitState() {
+    const mode = this.appliedCameraMode || displayMode;
+    const state = this.getOrbitState(mode);
+    try {
+      window.localStorage.setItem(this.orbitStorageKey(mode), JSON.stringify(state));
+    } catch (_) {}
+  }
+
+  updateOrbitFromPointerDelta(dx, dy) {
+    if (!this.isDragging) return;
+    const state = this.getOrbitState(this.appliedCameraMode || displayMode);
+    if (this.dragButton === "right") {
+      const panScale = state.distance * 0.0018;
+      state.targetX -= dx * panScale;
+      state.targetY += dy * panScale;
+    } else {
+      state.yaw += dx * 0.01;
+      state.pitch = constrain(state.pitch + dy * 0.01, -1.35, 1.35);
+    }
+    this.saveOrbitState();
+  }
+
+  applyCameraState() {
+    return;
+  }
+
+  saveCameraState() {
+    return;
+  }
+
+  drawHorizonBackground(p) {
+    p.push();
+    if (p.drawingContext?.disable && p.drawingContext?.DEPTH_TEST !== undefined) {
+      p.drawingContext.disable(p.drawingContext.DEPTH_TEST);
+    }
+    p.camera();
+    p.resetMatrix();
+    p.translate(-p.width / 2, -p.height / 2);
+    p.noFill();
+    for (let y = 0; y < p.height; y += 2) {
+      const t = y / Math.max(1, p.height - 1);
+      const shade = Math.round(lerp(0, 64, Math.pow(t, 1.35)));
+      p.stroke(shade, shade, shade);
+      p.line(0, y, p.width, y);
+    }
+    p.noStroke();
+    p.fill(42, 42, 42, 90);
+    p.rect(0, p.height * 0.62, p.width, p.height * 0.38);
+    if (p.drawingContext?.enable && p.drawingContext?.DEPTH_TEST !== undefined) {
+      p.drawingContext.enable(p.drawingContext.DEPTH_TEST);
+    }
+    p.pop();
+  }
+
   mountOverlaySketch(p) {
     this.tp = p;
     p.setup = () => {
       const { width, height } = this.getSize();
       const c = p.createCanvas(width, height);
       c.parent(this.overlayLayer);
+      this.overlayGraphics = p.createGraphics(width, height);
     };
 
     p.draw = () => {
       p.clear();
+      if (!this.overlayGraphics) return;
+
+      const g = this.overlayGraphics;
+      g.clear();
       if (displayMode !== "preview" || !this.reflectionText) return;
 
-      const boxX = p.width * 0.06;
-      const boxY = p.height * 0.1;
-      const boxW = p.width * 0.34;
-      const boxH = p.height * 0.8;
-      const fittedSize = fitPreviewGraphicsTextSize(p, this.reflectionText, boxW, boxH);
+      const boxX = g.width * 0.06;
+      const boxY = g.height * 0.1;
+      const boxW = g.width * 0.34;
+      const boxH = g.height * 0.8;
+      const fittedSize = fitPreviewGraphicsTextSize(g, this.reflectionText, boxW, boxH);
+
+      g.push();
+      g.clear();
+      g.noStroke();
+      g.fill(255, 245, 232, 230);
+      g.textFont("Georgia");
+      g.textAlign(g.LEFT, g.TOP);
+      g.textSize(fittedSize);
+      g.textLeading(fittedSize * 1.08);
+      g.text(this.reflectionText, boxX, boxY, boxW, boxH);
+      g.pop();
 
       p.push();
-      p.noStroke();
-      p.fill(255, 245, 232, 230);
-      p.textFont("Georgia");
-      p.textAlign(p.LEFT, p.TOP);
-      p.textSize(fittedSize);
-      p.textLeading(fittedSize * 1.08);
-      p.text(this.reflectionText, boxX, boxY, boxW, boxH);
+      p.image(g, 0, 0, p.width, p.height);
       p.pop();
     };
 
@@ -1498,6 +1657,7 @@ class WrenchPreview3D {
     const { width, height } = this.getSize();
     this.p.resizeCanvas(width, height);
     if (this.tp) this.tp.resizeCanvas(width, height);
+    if (this.overlayGraphics) this.overlayGraphics.resizeCanvas(width, height);
   }
 
   setState({ segmentColors, error, reflectionText }) {
@@ -1936,11 +2096,23 @@ function lerpVec3(a, b, t) {
 function hexToRgb(hex) {
   const raw = String(hex || "#000000").replace("#", "").padStart(6, "0");
   const value = parseInt(raw.slice(0, 6), 16);
-  return {
+  const rgb = {
     r: (value >> 16) & 255,
     g: (value >> 8) & 255,
     b: value & 255
   };
+  if (rgb.r <= 2 && rgb.g <= 2 && rgb.b <= 2) {
+    return { r: 16, g: 16, b: 16 };
+  }
+  const minChannel = 10;
+  if (rgb.r <= minChannel && rgb.g <= minChannel && rgb.b <= minChannel) {
+    return {
+      r: Math.round(rgb.r * 0.35 + 14),
+      g: Math.round(rgb.g * 0.35 + 14),
+      b: Math.round(rgb.b * 0.35 + 14)
+    };
+  }
+  return rgb;
 }
 
 function escapeHtml(s) {

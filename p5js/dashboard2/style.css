@@ -1,3 +1,17 @@
+:root {
+  --bg-0: #171717;
+  --bg-1: #171717;
+  --bg-2: #171717;
+  --panel-dark: rgba(7, 14, 18, 0.94);
+  --panel-blue: rgba(6, 39, 48, 0.86);
+  --line: rgba(74, 108, 118, 0.22);
+  --cyan: #53d5ea;
+  --cyan-dim: #77aeb8;
+  --amber: #b7942f;
+  --orange: #ff7a2f;
+  --cream: #f5f1e8;
+}
+
 html,
 body {
   margin: 0;
@@ -5,16 +19,16 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #06141d;
+  background: var(--bg-0);
 }
 
 body {
-  color: #e6edf3;
+  color: var(--cream);
   font-family: "IBM Plex Mono", monospace;
 }
 
 body.preview-mode {
-  background: #000;
+  background: #171717;
 }
 
 #app {
@@ -25,11 +39,71 @@ body.preview-mode {
 }
 
 #sidebar-panel {
-  flex: 0 0 224px;
+  flex: 0 0 168px;
   height: 100vh;
-  background: #081722;
-  border-right: 1px solid #113248;
+  background: #171717;
+  border-right: 0;
+  box-shadow: none;
   overflow: hidden;
+}
+
+.sidebar-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 36px 12px 20px;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.sidebar-button,
+.sidebar-status,
+.sidebar-meta {
+  width: 100%;
+  min-height: 32px;
+  border: 0;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1;
+  padding: 9px 10px;
+  text-align: left;
+  box-sizing: border-box;
+}
+
+.sidebar-button {
+  color: #f5f1e8;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.sidebar-button.tone-high { background: #4a4a4a; }
+.sidebar-button.tone-mid { background: #3a3a3a; }
+.sidebar-button.tone-low { background: #2f2f2f; }
+.sidebar-button.tone-off { background: #202020; color: #8d8d8d; }
+
+.sidebar-button:hover:not(:disabled) { background: #555555; }
+.sidebar-button:active:not(:disabled) { background: #262626; }
+.sidebar-button:disabled {
+  cursor: default;
+  opacity: 1;
+  color: #8d8d8d;
+}
+
+.sidebar-status {
+  margin-top: 4px;
+  background: #2c2c2c;
+  color: #f5f1e8;
+}
+
+.sidebar-status.is-connected {
+  background: #3a3a3a;
+}
+
+.sidebar-meta {
+  background: #252525;
+  color: #bcbcbc;
 }
 
 #content-panel {
@@ -40,7 +114,7 @@ body.preview-mode {
   flex-direction: row;
   gap: 20px;
   padding: 20px 20px 24px;
-  background: #06141d;
+  background: var(--bg-0);
 }
 
 .content-column {
@@ -86,20 +160,23 @@ body.preview-mode {
 
 .panel-title {
   margin: 16px 0 8px;
-  color: #d7e4ec;
-  font-size: 12px;
+  color: var(--amber);
+  font-size: 11px;
   line-height: 1.2;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
+  text-shadow: 0 0 14px rgba(241, 208, 75, 0.22);
 }
 
 .panel-box {
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
-  background: #0b1b27;
-  border: 1px solid #18435e;
-  border-radius: 10px;
+  background: rgba(18, 30, 36, 0.96);
+  border: 0;
+  border-radius: 9px;
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.28);
 }
 
 canvas {
@@ -116,6 +193,25 @@ div {
   font-size: 13px;
 }
 
+#editor.ace-chaos,
+#editor .ace_scroller,
+#editor .ace_gutter,
+#editor .ace_gutter-active-line,
+#editor .ace_active-line,
+#editor .ace_marker-layer .ace_active-line {
+  background: #000000 !important;
+}
+
+#editor .ace_gutter {
+  color: #8a8a8a !important;
+}
+
+#editor .ace_constant.ace_numeric,
+#editor .ace_constant.ace_language,
+#editor .ace_constant.ace_character {
+  color: var(--amber) !important;
+}
+
 .metrics-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -125,24 +221,31 @@ div {
 }
 
 .metric-card {
-  background: #0d2230;
-  border: 1px solid #16435c;
-  border-radius: 8px;
-  padding: 7px;
+  background: var(--bg-0);
+  border: 0;
+  border-radius: 7px;
+  padding: 8px;
+  box-shadow: none;
 }
 
 .metric-label {
-  color: #86a7ba;
+  color: #b5b5b5;
   font-size: 9px;
   margin-bottom: 4px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.12em;
 }
 
 .metric-value {
-  color: #e6edf3;
-  font-size: 12px;
+  color: #f0f0f0;
+  font-size: 13px;
   line-height: 1.1;
+  text-shadow: none;
+}
+
+.console-section .panel-box,
+.device-info .panel-box {
+  background: #000000;
 }
 
 .preview-wrap {
@@ -153,7 +256,7 @@ div {
   align-items: center;
   justify-content: center;
   padding: 0;
-  background: #000;
+  background: transparent;
 }
 
 .preview-webgl,
@@ -162,7 +265,13 @@ div {
   inset: 0;
 }
 
+.preview-webgl {
+  z-index: 1;
+  background: #000000;
+}
+
 .preview-overlay {
+  z-index: 2;
   pointer-events: none;
 }
 
@@ -173,7 +282,7 @@ div {
 }
 
 .preview-error {
-  color: #edae49;
+  color: var(--orange);
   font-size: 12px;
   white-space: pre-wrap;
 }
@@ -183,15 +292,16 @@ div {
   top: 14px;
   right: 14px;
   z-index: 50;
-  border: 1px solid #18435e;
-  background: rgba(6, 20, 29, 0.88);
-  color: #e6edf3;
+  border: 0;
+  background: rgba(18, 24, 28, 0.92);
+  color: var(--amber);
   font: inherit;
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
   padding: 7px 10px;
   border-radius: 999px;
+  box-shadow: 0 0 20px rgba(241, 208, 75, 0.08);
   cursor: pointer;
 }
 
