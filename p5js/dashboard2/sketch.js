@@ -88,6 +88,7 @@ let sidebarPyrSelect = null;
 let sidebarAuthButton = null;
 let sidebarShiftrLink = null;
 let sidebarReflectionLink = null;
+let sidebarPromptLink = null;
 let sidebarButtons = {};
 let sidebarSyncTimer = null;
 
@@ -257,6 +258,14 @@ function createSidebarControls() {
   sidebarReflectionLink = createA(reflectionViewUrl(), "Open Reflection", "_blank");
   sidebarReflectionLink.parent(wrap);
   sidebarReflectionLink.class("sidebar-link");
+
+  sidebarPromptLink = createA(
+    "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/edit?tab=t.0#heading=h.m431eoeh85xi",
+    "Prompt",
+    "_blank"
+  );
+  sidebarPromptLink.parent(wrap);
+  sidebarPromptLink.class("sidebar-link");
 }
 
 function syncSidebarControls() {
