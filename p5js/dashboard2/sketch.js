@@ -17,7 +17,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v15";
+const DASHBOARD2_VERSION = "v21";
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -33,7 +33,7 @@ let remoteAutomationStopped = false;
 let automationWasRunningBeforeRemoteStop = false;
 let debugDownloadsEnabled = false;
 let generationInProgress = false;
-let lastPromptText = "";
+let lastPromptHistory = [];
 let lastDescription = "";
 let lastDesignRationale = "";
 let lastLocation = "";
@@ -641,6 +641,7 @@ function resubscribeReflectorTopics(prevId, nextId) {
 }
 
 function resetSelectedReflectorState() {
+  lastPromptHistory = [];
   lastDescription = "";
   lastDesignRationale = "";
   lastLocation = "";
@@ -659,12 +660,25 @@ function resetSelectedReflectorState() {
   renderMetrics();
 }
 
+function rememberPromptReflection(text) {
+  const next = String(text || "").trim();
+  if (!next) return;
+  if (lastPromptHistory[0] === next) return;
+  lastPromptHistory = [next, ...lastPromptHistory.filter((item) => item !== next)].slice(0, 5);
+}
+
+function lastPromptHistoryText() {
+  return lastPromptHistory
+    .map((item, index) => `${index + 1}. ${item}`)
+    .join("\n\n");
+}
+
 function reflectionWithLocation(reflectionText, locationText) {
   const reflection = String(reflectionText || "").trim();
   const location = String(locationText || "").trim();
   if (!location) return reflection;
   if (!reflection) return location;
-  return reflection + "\n\nLocation: " + location;
+  return reflection + "\n\n" + location;
 }
 
 function currentReflectionPanelText() {
@@ -735,7 +749,7 @@ function applyDisplayMode() {
     modeToggleButton.html(displayMode === "preview" ? "Debug" : "Preview");
   }
   if (previewController) {
-    previewController.setReflectionText(lastDescription || "");
+    previewController.setReflectionText(reflectionWithLocation(lastDescription, lastLocation));
   }
   updateReflectionTypography();
 }
@@ -875,17 +889,40 @@ function previewCanvasFontBounds(p, content, boxW) {
 }
 
 function fitPreviewGraphicsTextSize(g, content, boxW, boxH) {
-  const textValue = String(content || "");
+  const parts = splitReflectionLocationText(content);
+  const textValue = parts.main;
   let size = constrain(min(g.width, g.height) * 0.11, 42, 110);
   const minSize = 18;
   while (size > minSize) {
-    g.textSize(size);
-    g.textLeading(size * 1.08);
-    const bounds = previewGraphicsFontBounds(g, textValue, boxW);
+    const bounds = previewGraphicsCombinedBounds(g, textValue, parts.location, boxW, size);
     if (bounds.height <= boxH) return size;
     size -= 2;
   }
   return minSize;
+}
+
+function previewGraphicsCombinedBounds(g, mainText, locationText, boxW, fontSize) {
+  g.textSize(fontSize);
+  g.textLeading(fontSize * 1.08);
+  const mainBounds = previewGraphicsFontBounds(g, mainText, boxW);
+  if (!locationText) return mainBounds;
+  const locationSize = Math.max(14, fontSize * 0.5);
+  g.textSize(locationSize);
+  g.textLeading(locationSize * 1.15);
+  const locationBounds = previewGraphicsFontBounds(g, locationText, boxW);
+  return {
+    height: mainBounds.height + fontSize * 0.7 + locationBounds.height
+  };
+}
+
+function splitReflectionLocationText(content) {
+  const raw = String(content || "").trim();
+  const match = raw.match(/^(.*?)(?:\n\s*\n)?([^\n]+)$/s);
+  if (!match) return { main: raw, location: "" };
+  return {
+    main: (match[1] || "").trim(),
+    location: (match[2] || "").trim()
+  };
 }
 
 function previewGraphicsFontBounds(g, content, boxW) {
@@ -1114,11 +1151,14 @@ function publishReflectionUpdate(reflection, code, designRationale, location) {
   logLine("Published reflection update.");
 }
 
-function publishCodeState(code, source) {
+function publishCodeState(code, source, meta = {}) {
   if (!client || !isConnected) return;
   const payload = JSON.stringify({
     code: code || "",
     source: source || "dashboard2",
+    reflection: meta.reflection || "",
+    design_rationale: meta.design_rationale || "",
+    location: meta.location || "",
     updated_at: new Date().toISOString(),
     dashboard_id: dashboardInstanceId
   });
@@ -1256,10 +1296,11 @@ function applyReflectionMessage(msg) {
       (typeof obj.description === "string" ? obj.description : "");
     if (typeof reflectionText === "string") {
       lastDescription = reflectionText;
+      rememberPromptReflection(reflectionText);
       lastDesignRationale = typeof obj.design_rationale === "string" ? obj.design_rationale : "";
       lastLocation = typeof obj.location === "string" ? obj.location : "";
       descriptionDiv.html(currentReflectionPanelText());
-      if (previewController) previewController.setReflectionText(lastDescription);
+      if (previewController) previewController.setReflectionText(reflectionWithLocation(lastDescription, lastLocation));
       updateReflectionTypography();
     }
     if (typeof obj.code === "string" && !getEditorValue().trim()) {
@@ -1277,10 +1318,23 @@ function applyCodeStateMessage(msg) {
   try {
     const obj = JSON.parse(msg);
     if (typeof obj.code !== "string") return;
+    if (typeof obj.reflection === "string") {
+      lastDescription = obj.reflection;
+      rememberPromptReflection(obj.reflection);
+    }
+    if (typeof obj.design_rationale === "string") {
+      lastDesignRationale = obj.design_rationale;
+    }
+    if (typeof obj.location === "string") {
+      lastLocation = obj.location;
+    }
     if (getEditorValue() !== obj.code) {
       setEditorValue(obj.code);
       refreshPreview();
     }
+    descriptionDiv.html(currentReflectionPanelText());
+    if (previewController) previewController.setReflectionText(reflectionWithLocation(lastDescription, lastLocation));
+    updateReflectionTypography();
     logLine("Loaded retained code state.");
   } catch (err) {
     logLine("Code state parse error: " + (err && err.message ? err.message : err));
@@ -1302,10 +1356,11 @@ function applyDashboardSyncMessage(msg) {
         (typeof obj.description === "string" ? obj.description : "");
       if (typeof reflectionText === "string" && reflectionText) {
         lastDescription = reflectionText;
+        rememberPromptReflection(reflectionText);
         lastDesignRationale = typeof obj.design_rationale === "string" ? obj.design_rationale : lastDesignRationale;
         lastLocation = typeof obj.location === "string" ? obj.location : lastLocation;
         descriptionDiv.html(currentReflectionPanelText());
-        if (previewController) previewController.setReflectionText(lastDescription);
+        if (previewController) previewController.setReflectionText(reflectionWithLocation(lastDescription, lastLocation));
         updateReflectionTypography();
       }
       logLine("Synced code from another dashboard.");
@@ -1374,22 +1429,49 @@ function cmdGetCode() {
 function cmdRunNow() {
   const code = getEditorValue();
   publishJsonLine({ cmd: "run_now", code });
-  publishCodeState(code, "run_now");
-  publishDashboardSync("code_update", { code });
+  publishCodeState(code, "run_now", {
+    reflection: lastDescription,
+    design_rationale: lastDesignRationale,
+    location: lastLocation
+  });
+  publishDashboardSync("code_update", {
+    code,
+    reflection: lastDescription,
+    design_rationale: lastDesignRationale,
+    location: lastLocation
+  });
 }
 
 function cmdSetCode() {
   const code = getEditorValue();
   publishJsonLine({ cmd: "set_code", code });
-  publishCodeState(code, "set_code");
-  publishDashboardSync("code_update", { code });
+  publishCodeState(code, "set_code", {
+    reflection: lastDescription,
+    design_rationale: lastDesignRationale,
+    location: lastLocation
+  });
+  publishDashboardSync("code_update", {
+    code,
+    reflection: lastDescription,
+    design_rationale: lastDesignRationale,
+    location: lastLocation
+  });
 }
 
 function cmdRunAndStore() {
   const code = getEditorValue();
   publishJsonLine({ cmd: "run_and_store", code });
-  publishCodeState(code, "run_and_store");
-  publishDashboardSync("code_update", { code });
+  publishCodeState(code, "run_and_store", {
+    reflection: lastDescription,
+    design_rationale: lastDesignRationale,
+    location: lastLocation
+  });
+  publishDashboardSync("code_update", {
+    code,
+    reflection: lastDescription,
+    design_rationale: lastDesignRationale,
+    location: lastLocation
+  });
 }
 
 function cmdReboot() {
@@ -1425,10 +1507,11 @@ async function generateWrenchAndRun() {
 
     if (out.reflection) {
       lastDescription = out.reflection;
+      rememberPromptReflection(out.reflection);
       lastDesignRationale = out.design_rationale || "";
       lastLocation = out.location || "";
       descriptionDiv.html(currentReflectionPanelText());
-      if (previewController) previewController.setReflectionText(lastDescription);
+      if (previewController) previewController.setReflectionText(reflectionWithLocation(lastDescription, lastLocation));
       updateReflectionTypography();
       logLine("— ChatGPT reflection —");
       logLine(out.reflection);
@@ -1436,11 +1519,14 @@ async function generateWrenchAndRun() {
     }
 
     setEditorValue(out.wrench_code);
-    lastPromptText = out.reflection || "";
     refreshPreview();
     publishJsonLine({ cmd: "run_now", code: out.wrench_code });
     publishReflectionUpdate(out.reflection, out.wrench_code, out.design_rationale || "", out.location || "");
-    publishCodeState(out.wrench_code, "generate");
+    publishCodeState(out.wrench_code, "generate", {
+      reflection: out.reflection || "",
+      design_rationale: out.design_rationale || "",
+      location: out.location || ""
+    });
     publishDashboardSync("code_update", {
       code: out.wrench_code,
       reflection: out.reflection || "",
@@ -1476,7 +1562,7 @@ async function fetchDocMarkdown() {
 function injectLastPromptIntoMarkdown(md) {
   if (!md) return md;
   const placeholderRegex = /\\?\[last\\?_prompt\\?\]/i;
-  return md.replace(placeholderRegex, lastPromptText || "");
+  return md.replace(placeholderRegex, lastPromptHistoryText());
 }
 
 function injectReflectorIdIntoMarkdown(md) {
@@ -1775,8 +1861,17 @@ async function autoFixWrenchAndRun(errText) {
     refreshPreview();
     if (fixed.description) logLine(fixed.description);
     publishJsonLine({ cmd: "run_now", code: fixed.wrench_code });
-    publishCodeState(fixed.wrench_code, "auto_fix");
-    publishDashboardSync("code_update", { code: fixed.wrench_code, reflection: fixed.description || "" });
+    publishCodeState(fixed.wrench_code, "auto_fix", {
+      reflection: fixed.description || "",
+      design_rationale: lastDesignRationale,
+      location: lastLocation
+    });
+    publishDashboardSync("code_update", {
+      code: fixed.wrench_code,
+      reflection: fixed.description || "",
+      design_rationale: lastDesignRationale,
+      location: lastLocation
+    });
     logLine("Sent run_now with fixed code.");
   } catch (e) {
     logLine("Auto-fix failed: " + (e && e.message ? e.message : e));
@@ -2009,7 +2104,7 @@ function setEditorValue(value) {
 
 function setupPreview() {
   previewController = new WrenchPreviewController(previewDiv);
-  previewController.setReflectionText(lastDescription || descriptionDiv?.elt?.textContent || "");
+  previewController.setReflectionText(reflectionWithLocation(lastDescription, lastLocation) || descriptionDiv?.elt?.textContent || "");
   refreshPreview();
 }
 
@@ -2425,7 +2520,9 @@ class WrenchPreview3D {
       const boxY = g.height * (narrow ? 0.08 : 0.1);
       const boxW = g.width * (narrow ? 0.88 : 0.34);
       const boxH = g.height * (narrow ? 0.84 : 0.8);
+      const parts = splitReflectionLocationText(this.reflectionText);
       const fittedSize = fitPreviewGraphicsTextSize(g, this.reflectionText, boxW, boxH);
+      const locationSize = Math.max(14, fittedSize * 0.5);
 
       g.push();
       g.clear();
@@ -2435,7 +2532,16 @@ class WrenchPreview3D {
       g.textAlign(g.LEFT, g.TOP);
       g.textSize(fittedSize);
       g.textLeading(fittedSize * 1.08);
-      g.text(this.reflectionText, boxX, boxY, boxW, boxH);
+      const mainBounds = previewGraphicsFontBounds(g, parts.main, boxW);
+      g.text(parts.main, boxX, boxY, boxW, boxH);
+      if (parts.location) {
+        g.fill(255, 245, 232, 175);
+        g.textStyle(g.ITALIC);
+        g.textSize(locationSize);
+        g.textLeading(locationSize * 1.15);
+        g.text(parts.location, boxX, boxY + mainBounds.height + fittedSize * 0.7, boxW, boxH);
+        g.textStyle(g.NORMAL);
+      }
       g.pop();
 
       p.push();
@@ -2556,15 +2662,15 @@ class WrenchPreview3D {
     for (let i = 0; i < glowAnchors.length; i++) {
       const src = glowColors[i] || { r: 0, g: 0, b: 0 };
       const anchor = glowAnchors[i];
-      const alpha = Math.max(src.r, src.g, src.b) * 0.035;
+      const alpha = Math.max(src.r, src.g, src.b) * 0.085;
       if (alpha <= 1) continue;
       const projected = projectPointToPlane(anchor, shiftedCenter, u, v);
       const baseW = 180 + i * 28;
       const baseH = 90 + i * 18;
       for (let layer = 9; layer >= 0; layer--) {
         const layerScale = 1.5 + layer * 0.5;
-        const layerAlpha = alpha * (0.28 - layer * 0.022);
-        if (layerAlpha <= 0.5) continue;
+        const layerAlpha = alpha * (0.34 - layer * 0.024);
+        if (layerAlpha <= 1) continue;
         p.fill(src.r, src.g, src.b, layerAlpha);
         p.beginShape();
         for (let j = 0; j < 28; j++) {
@@ -2615,7 +2721,7 @@ class WrenchPreview3D {
     const yaw = Math.atan2(dx, dz);
     const pitch = Math.acos(Math.max(-1, Math.min(1, dy / len)));
     const c = hexToRgb(hexColor);
-    const glowAlpha = Math.max(c.r, c.g, c.b) * 0.032;
+    const glowAlpha = Math.max(c.r, c.g, c.b) * 0.09;
 
     p.push();
     p.translate(midX, midY, midZ);
@@ -2628,8 +2734,8 @@ class WrenchPreview3D {
       }
       for (let layer = 0; layer < 6; layer++) {
         const layerScale = 1.35 + layer * 0.22;
-        const layerAlpha = glowAlpha * (0.28 - layer * 0.035);
-        if (layerAlpha <= 0.5) continue;
+        const layerAlpha = glowAlpha * (0.34 - layer * 0.04);
+        if (layerAlpha <= 1) continue;
         p.push();
         p.fill(c.r, c.g, c.b, layerAlpha);
         p.cylinder(radius * layerScale, len * (1.015 + layer * 0.015), 12, 1, false, false);

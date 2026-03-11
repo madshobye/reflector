@@ -26,13 +26,24 @@ function draw() {
   const boxY = height * 0.08;
   const boxW = width * 0.88;
   const boxH = height * 0.84;
+  const parts = splitReflectionLocationText(latestReflection);
   const fittedSize = fitTextSize(latestReflection, boxW, boxH);
+  const locationSize = max(14, fittedSize * 0.5);
 
   noStroke();
   fill(255, 245, 232, 230);
   textSize(fittedSize);
   textLeading(fittedSize * 1.08);
-  text(latestReflection, boxX, boxY, boxW, boxH);
+  const mainBounds = fontBoundsForBox(parts.main, boxW);
+  text(parts.main, boxX, boxY, boxW, boxH);
+  if (parts.location) {
+    fill(255, 245, 232, 175);
+    textStyle(ITALIC);
+    textSize(locationSize);
+    textLeading(locationSize * 1.15);
+    text(parts.location, boxX, boxY + mainBounds.height + fittedSize * 0.7, boxW, boxH);
+    textStyle(NORMAL);
+  }
 
   fill(255, 245, 232, 150);
   textSize(metaTextSize());
@@ -112,7 +123,9 @@ function applyReflectionPayload(payload) {
 
   try {
     const data = JSON.parse(payload);
-    latestReflection = data.description || "No reflection text provided.";
+    const reflection = data.reflection || data.description || "No reflection text provided.";
+    const location = data.location || "";
+    latestReflection = location ? reflection + "\n\n" + location : reflection;
     connectionState = "Connected";
   } catch (err) {
     latestReflection = payload;
@@ -133,14 +146,13 @@ function metaTextSize() {
 }
 
 function fitTextSize(content, boxW, boxH) {
-  const textValue = content || "";
+  const parts = splitReflectionLocationText(content);
+  const textValue = parts.main || "";
   let size = reflectionTextSize();
   const minSize = 18;
 
   while (size > minSize) {
-    textSize(size);
-    textLeading(size * 1.08);
-    const bounds = fontBoundsForBox(textValue, boxW);
+    const bounds = combinedFontBoundsForBox(textValue, parts.location, boxW, size);
     if (bounds.height <= boxH) {
       return size;
     }
@@ -148,6 +160,30 @@ function fitTextSize(content, boxW, boxH) {
   }
 
   return minSize;
+}
+
+function combinedFontBoundsForBox(mainText, locationText, boxW, fontSize) {
+  textSize(fontSize);
+  textLeading(fontSize * 1.08);
+  const mainBounds = fontBoundsForBox(mainText, boxW);
+  if (!locationText) return mainBounds;
+  const locationSize = max(14, fontSize * 0.5);
+  textSize(locationSize);
+  textLeading(locationSize * 1.15);
+  const locationBounds = fontBoundsForBox(locationText, boxW);
+  return {
+    height: mainBounds.height + fontSize * 0.7 + locationBounds.height
+  };
+}
+
+function splitReflectionLocationText(content) {
+  const raw = String(content || "").trim();
+  const match = raw.match(/^(.*?)(?:\n\s*\n)?([^\n]+)$/s);
+  if (!match) return { main: raw, location: "" };
+  return {
+    main: (match[1] || "").trim(),
+    location: (match[2] || "").trim()
+  };
 }
 
 function fontBoundsForBox(content, boxW) {
