@@ -13,14 +13,11 @@ const GPT_MODEL_OPTIONS = [
 ];
 const DEFAULT_GPT_MODEL = "gpt-5.1-codex";
 const ORBIT_STORAGE_VERSION = "v2";
+const PYR_ID_KEY = "dashboard2_pyr_id";
+const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
-const PYR_ID = "reflector1";
-const MQTT_CMD_TOPIC = `/glow_dk_cph/${PYR_ID}/cmd`;
-const MQTT_EVT_TOPIC = `/glow_dk_cph/${PYR_ID}/evt`;
-const MQTT_REFLECTION_TOPIC = `/glow_dk_cph/${PYR_ID}/reflection`;
-const MQTT_CODE_STATE_TOPIC = `/glow_dk_cph/${PYR_ID}/code_state`;
 const UI_PALETTE = ["#303030", "#383838", "#424242", "#4a4a4a", "#262626"];
 const DISPLAY_MODE_KEY = "dashboard2_display_mode";
 
@@ -35,6 +32,7 @@ let lastDescription = "";
 let lastCompileErrText = "";
 let lastCompileErrMs = 0;
 let selectedGptModel = DEFAULT_GPT_MODEL;
+let selectedPyrId = "reflector1";
 
 let OPENAI_API_KEY = "";
 let mqttKey = "";
@@ -81,6 +79,7 @@ let reflectionMeasureCanvas = null;
 let sidebarStatusDiv = null;
 let sidebarIntervalDiv = null;
 let sidebarModelSelect = null;
+let sidebarPyrSelect = null;
 let sidebarButtons = {};
 let sidebarSyncTimer = null;
 
@@ -89,6 +88,7 @@ async function setup() {
   displayMode = loadDisplayMode();
   automationIntervalMinutes = loadAutomationIntervalMinutes();
   selectedGptModel = loadSelectedGptModel();
+  selectedPyrId = loadSelectedPyrId();
   createLayout();
 
   try {
@@ -105,8 +105,8 @@ async function setup() {
 
   setEditorValue(defaultWrenchExample());
   logLine("Ready.");
-  logLine("cmd: " + MQTT_CMD_TOPIC);
-  logLine("evt: " + MQTT_EVT_TOPIC);
+  logLine("cmd: " + mqttCmdTopic());
+  logLine("evt: " + mqttEvtTopic());
   renderMetrics();
   applyDisplayMode();
   updateDomLayout();
@@ -192,6 +192,30 @@ function createSidebarControls() {
     sidebarButtons[key] = btn;
   }
 
+  sidebarPyrSelect = createSelect();
+  sidebarPyrSelect.parent(wrap);
+  sidebarPyrSelect.class("sidebar-select");
+  for (const pyrId of PYR_ID_OPTIONS) {
+    sidebarPyrSelect.option(pyrId, pyrId);
+  }
+  sidebarPyrSelect.selected(selectedPyrId);
+  sidebarPyrSelect.changed(() => {
+    const nextId = sidebarPyrSelect.value();
+    if (nextId === selectedPyrId) return;
+    const prevId = selectedPyrId;
+    selectedPyrId = nextId;
+    persistSelectedPyrId();
+    logLine("Reflector target: " + selectedPyrId);
+    logLine("cmd: " + mqttCmdTopic());
+    logLine("evt: " + mqttEvtTopic());
+    resetSelectedReflectorState();
+    if (client && isConnected) {
+      resubscribeReflectorTopics(prevId, selectedPyrId);
+      requestSelectedReflectorCode();
+    }
+    syncSidebarControls();
+  });
+
   sidebarModelSelect = createSelect();
   sidebarModelSelect.parent(wrap);
   sidebarModelSelect.class("sidebar-select");
@@ -238,6 +262,14 @@ function syncSidebarControls() {
   updateSidebarButton("automation", { label: automationEnabled ? "Automation: ON" : "Automation: OFF", disabled: !isConnected || generationInProgress, tone: automationEnabled ? "high" : (!isConnected || generationInProgress ? "off" : "off") });
   updateSidebarButton("insertExample", { disabled: false, tone: "low" });
   updateSidebarButton("clearConsole", { disabled: false, tone: "low" });
+  if (sidebarPyrSelect) {
+    sidebarPyrSelect.value(selectedPyrId);
+    sidebarPyrSelect.removeClass("tone-high");
+    sidebarPyrSelect.removeClass("tone-mid");
+    sidebarPyrSelect.removeClass("tone-low");
+    sidebarPyrSelect.removeClass("tone-off");
+    sidebarPyrSelect.addClass(isConnected ? "tone-mid" : "tone-low");
+  }
   if (sidebarModelSelect) {
     sidebarModelSelect.value(selectedGptModel);
     sidebarModelSelect.removeClass("tone-high");
@@ -248,7 +280,7 @@ function syncSidebarControls() {
   }
 
   if (sidebarIntervalDiv) {
-    sidebarIntervalDiv.html("Model: " + selectedGptModel);
+    sidebarIntervalDiv.html(selectedPyrId + " · " + selectedGptModel);
   }
 }
 
@@ -315,6 +347,86 @@ function persistSelectedGptModel() {
   try {
     window.localStorage.setItem(GPT_MODEL_KEY, selectedGptModel);
   } catch (_) {}
+}
+
+function loadSelectedPyrId() {
+  try {
+    const saved = window.localStorage.getItem(PYR_ID_KEY);
+    if (saved && PYR_ID_OPTIONS.includes(saved)) return saved;
+  } catch (_) {}
+  return "reflector1";
+}
+
+function persistSelectedPyrId() {
+  try {
+    window.localStorage.setItem(PYR_ID_KEY, selectedPyrId);
+  } catch (_) {}
+}
+
+function mqttCmdTopic(pyrId = selectedPyrId) {
+  return `/glow_dk_cph/${pyrId}/cmd`;
+}
+
+function mqttEvtTopic(pyrId = selectedPyrId) {
+  return `/glow_dk_cph/${pyrId}/evt`;
+}
+
+function mqttReflectionTopic(pyrId = selectedPyrId) {
+  return `/glow_dk_cph/${pyrId}/reflection`;
+}
+
+function mqttCodeStateTopic(pyrId = selectedPyrId) {
+  return `/glow_dk_cph/${pyrId}/code_state`;
+}
+
+function subscribeReflectorTopics(pyrId = selectedPyrId) {
+  client.subscribe(mqttEvtTopic(pyrId), (err) => {
+    if (err) logLine("Subscribe error: " + err);
+    else logLine("Subscribed: " + mqttEvtTopic(pyrId));
+  });
+  client.subscribe(mqttReflectionTopic(pyrId), (err) => {
+    if (err) logLine("Subscribe error: " + err);
+    else logLine("Subscribed: " + mqttReflectionTopic(pyrId));
+  });
+  client.subscribe(mqttCodeStateTopic(pyrId), (err) => {
+    if (err) logLine("Subscribe error: " + err);
+    else logLine("Subscribed: " + mqttCodeStateTopic(pyrId));
+  });
+}
+
+function unsubscribeReflectorTopics(pyrId) {
+  if (!client) return;
+  client.unsubscribe(mqttEvtTopic(pyrId));
+  client.unsubscribe(mqttReflectionTopic(pyrId));
+  client.unsubscribe(mqttCodeStateTopic(pyrId));
+}
+
+function resubscribeReflectorTopics(prevId, nextId) {
+  unsubscribeReflectorTopics(prevId);
+  subscribeReflectorTopics(nextId);
+}
+
+function resetSelectedReflectorState() {
+  lastDescription = "";
+  descriptionDiv.html("");
+  if (previewController) previewController.setReflectionText("");
+  setEditorValue("");
+  refreshPreview();
+  deviceMetrics = {
+    fps: "--",
+    heap_free: "--",
+    heap_largest: "--",
+    wrench_stack_hw: "--",
+    compile_stack_hw: "--",
+    loop_stack_hw: "--"
+  };
+  renderMetrics();
+}
+
+function requestSelectedReflectorCode() {
+  if (!client || !isConnected) return;
+  pendingGetCode = true;
+  publishJsonLine({ cmd: "get_code" });
 }
 
 function styleLogPanel(el, bg) {
@@ -587,18 +699,8 @@ function connectMQTT() {
     statusText = "MQTT connected";
     logLine("MQTT connected.");
     syncSidebarControls();
-    client.subscribe(MQTT_EVT_TOPIC, (err) => {
-      if (err) logLine("Subscribe error: " + err);
-      else logLine("Subscribed: " + MQTT_EVT_TOPIC);
-    });
-    client.subscribe(MQTT_REFLECTION_TOPIC, (err) => {
-      if (err) logLine("Subscribe error: " + err);
-      else logLine("Subscribed: " + MQTT_REFLECTION_TOPIC);
-    });
-    client.subscribe(MQTT_CODE_STATE_TOPIC, (err) => {
-      if (err) logLine("Subscribe error: " + err);
-      else logLine("Subscribed: " + MQTT_CODE_STATE_TOPIC);
-    });
+    subscribeReflectorTopics(selectedPyrId);
+    requestSelectedReflectorCode();
   });
 
   client.on("reconnect", () => {
@@ -624,15 +726,18 @@ function connectMQTT() {
 
   client.on("message", (topic, message) => {
     const s = message ? message.toString() : "";
-    if (topic === MQTT_REFLECTION_TOPIC) {
+    if (topic === mqttReflectionTopic()) {
       applyReflectionMessage(s);
       return;
     }
-    if (topic === MQTT_CODE_STATE_TOPIC) {
+    if (topic === mqttCodeStateTopic()) {
       applyCodeStateMessage(s);
       return;
     }
-    logLine(topic + ": " + s);
+    if (topic !== mqttEvtTopic()) return;
+    if (!logSummarizedEvtMessage(topic, s)) {
+      logLine(topic + ": " + s);
+    }
     maybeAutoFixFromEvt(s);
     tryAutoFillEditorFromGetCode(s);
   });
@@ -700,7 +805,7 @@ function publishJsonLine(obj) {
     return;
   }
   const payload = JSON.stringify(obj) + "\n";
-  client.publish(MQTT_CMD_TOPIC, payload);
+  client.publish(mqttCmdTopic(), payload);
   logLine(">>> " + payload.trim());
 }
 
@@ -711,7 +816,7 @@ function publishReflectionUpdate(description, code) {
     code: code || "",
     generated_at: new Date().toISOString()
   });
-  client.publish(MQTT_REFLECTION_TOPIC, payload, { retain: true });
+  client.publish(mqttReflectionTopic(), payload, { retain: true });
   logLine("Published reflection update.");
 }
 
@@ -722,7 +827,7 @@ function publishCodeState(code, source) {
     source: source || "dashboard2",
     updated_at: new Date().toISOString()
   });
-  client.publish(MQTT_CODE_STATE_TOPIC, payload, { retain: true });
+  client.publish(mqttCodeStateTopic(), payload, { retain: true });
   logLine("Published retained code state.");
 }
 
@@ -759,6 +864,18 @@ function applyCodeStateMessage(msg) {
   } catch (err) {
     logLine("Code state parse error: " + (err && err.message ? err.message : err));
   }
+}
+
+function logSummarizedEvtMessage(topic, msg) {
+  if (!msg || msg[0] !== "{") return false;
+  try {
+    const obj = JSON.parse(msg);
+    if (obj && obj.ok === true && typeof obj.code === "string") {
+      logLine(`${topic}: code received (${obj.code.length} chars)`);
+      return true;
+    }
+  } catch (_) {}
+  return false;
 }
 
 function cmdGetCode() {
@@ -1673,7 +1790,7 @@ class WrenchPreview3D {
       state.targetY += dy * panScale;
     } else {
       state.yaw += dx * 0.01;
-      state.pitch = constrain(state.pitch + dy * 0.01, 0.0, 1.52);
+      state.pitch = constrain(state.pitch + dy * 0.01, -0.18, 1.57);
     }
     this.saveOrbitState();
   }
