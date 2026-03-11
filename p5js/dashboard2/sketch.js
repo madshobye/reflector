@@ -1186,7 +1186,6 @@ function tryAutoFillEditorFromGetCode(msg) {
     if (obj.ok === true && typeof obj.code === "string") {
       setEditorValue(obj.code);
       refreshPreview();
-      publishCodeState(obj.code, "get_code");
       pendingGetCode = false;
       logLine("Loaded code into editor (" + obj.code.length + " chars).");
     }
