@@ -54,6 +54,9 @@ body.preview-mode {
   padding: 36px 12px 20px;
   height: 100%;
   box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 
 .sidebar-button,

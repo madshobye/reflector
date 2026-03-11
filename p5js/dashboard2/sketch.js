@@ -27,6 +27,8 @@ let autoFixInProgress = false;
 let automationEnabled = false;
 let automationTimerId = null;
 let automationIntervalMinutes = 15;
+let remoteAutomationStopped = false;
+let automationWasRunningBeforeRemoteStop = false;
 let generationInProgress = false;
 let lastPromptText = "";
 let lastDescription = "";
@@ -176,7 +178,7 @@ function createSidebarControls() {
     }],
     ["automationInterval", automationIntervalLabel(), () => cycleAutomationInterval()],
     ["automation", "Automation: OFF", () => toggleAutomation()],
-    ["stopAllAuto", "Stop All Auto", () => stopAllAutomationEverywhere()],
+    ["remoteAutomation", "Remote Stop", () => toggleRemoteAutomationEverywhere()],
     ["insertExample", "Insert Example", () => {
       setEditorValue(defaultWrenchExample());
       refreshPreview();
@@ -277,8 +279,16 @@ function syncSidebarControls() {
   updateSidebarButton("generate", { disabled: !isConnected || generationInProgress || !isAuthenticated, tone: isConnected && !generationInProgress && isAuthenticated ? "mid" : "off" });
   updateSidebarButton("autoFix", { label: autoFixEnabled ? "Auto-fix: ON" : "Auto-fix: OFF", disabled: !isAuthenticated, tone: autoFixEnabled && isAuthenticated ? "high" : "off" });
   updateSidebarButton("automationInterval", { label: automationIntervalLabel(), disabled: !isAuthenticated, tone: automationIntervalMinutes === 0 && isAuthenticated ? "high" : (isAuthenticated ? "low" : "off") });
-  updateSidebarButton("automation", { label: automationEnabled ? "Automation: ON" : "Automation: OFF", disabled: !isConnected || generationInProgress || !isAuthenticated, tone: automationEnabled && isAuthenticated ? "high" : "off" });
-  updateSidebarButton("stopAllAuto", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "low" : "off" });
+  updateSidebarButton("automation", {
+    label: automationEnabled ? "Automation: ON" : "Automation: OFF",
+    disabled: !isConnected || generationInProgress || !isAuthenticated || remoteAutomationStopped,
+    tone: automationEnabled && isAuthenticated ? "high" : "off"
+  });
+  updateSidebarButton("remoteAutomation", {
+    label: remoteAutomationStopped ? "Remote Start" : "Remote Stop",
+    disabled: !isConnected || !isAuthenticated,
+    tone: isConnected && isAuthenticated ? "low" : "off"
+  });
   updateSidebarButton("insertExample", { disabled: false, tone: "low" });
   updateSidebarButton("clearConsole", { disabled: false, tone: "low" });
   if (sidebarAuthButton) {
@@ -344,7 +354,7 @@ function setPrivilegedControlsVisible(visible) {
     "autoFix",
     "automationInterval",
     "automation",
-    "stopAllAuto"
+    "remoteAutomation"
   ];
   for (const key of privilegedKeys) {
     const btn = sidebarButtons[key];
@@ -900,6 +910,12 @@ function disconnectMQTT() {
 
 function toggleAutomation() {
   automationEnabled = !automationEnabled;
+  if (remoteAutomationStopped && automationEnabled) {
+    automationEnabled = false;
+    logLine("Automation is remotely stopped. Use Remote Start first.");
+    syncSidebarControls();
+    return;
+  }
   syncSidebarControls();
   if (!automationEnabled) {
     clearAutomationTimer();
@@ -1045,21 +1061,46 @@ function applyDashboardSyncMessage(msg) {
       logLine("Synced code from another dashboard.");
       return;
     }
-    if (obj.event === "stop_all_auto") {
-      automationEnabled = false;
-      clearAutomationTimer();
-      logLine("Automation stopped by another dashboard.");
-      syncSidebarControls();
+    if (obj.event === "remote_stop_auto") {
+      applyRemoteStopState("another dashboard");
+      return;
+    }
+    if (obj.event === "remote_start_auto") {
+      applyRemoteStartState("another dashboard");
     }
   } catch (_) {}
 }
 
-function stopAllAutomationEverywhere() {
+function applyRemoteStopState(sourceLabel) {
+  automationWasRunningBeforeRemoteStop = automationEnabled || automationWasRunningBeforeRemoteStop;
   automationEnabled = false;
+  remoteAutomationStopped = true;
   clearAutomationTimer();
-  logLine("Stopping automation on all dashboards.");
-  publishDashboardSync("stop_all_auto");
+  logLine("Automation stopped by " + sourceLabel + ".");
   syncSidebarControls();
+}
+
+function applyRemoteStartState(sourceLabel) {
+  const shouldResume = remoteAutomationStopped && automationWasRunningBeforeRemoteStop;
+  remoteAutomationStopped = false;
+  automationWasRunningBeforeRemoteStop = false;
+  logLine("Remote automation start from " + sourceLabel + ".");
+  if (shouldResume) {
+    automationEnabled = true;
+    if (generationInProgress) scheduleNextAutomationRun();
+    else if (isConnected) generateWrenchAndRun();
+  }
+  syncSidebarControls();
+}
+
+function toggleRemoteAutomationEverywhere() {
+  if (remoteAutomationStopped) {
+    applyRemoteStartState("this dashboard");
+    publishDashboardSync("remote_start_auto");
+    return;
+  }
+  applyRemoteStopState("this dashboard");
+  publishDashboardSync("remote_stop_auto");
 }
 
 function logSummarizedEvtMessage(topic, msg) {
