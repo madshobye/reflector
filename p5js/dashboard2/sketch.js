@@ -10,6 +10,7 @@ const MQTT_EVT_TOPIC = `/glow_dk_cph/${PYR_ID}/evt`;
 const MQTT_REFLECTION_TOPIC = `/glow_dk_cph/${PYR_ID}/reflection`;
 const MQTT_CODE_STATE_TOPIC = `/glow_dk_cph/${PYR_ID}/code_state`;
 const UI_PALETTE = ["#edae49", "#d1495b", "#00798c", "#30638e", "#003d5b"];
+const DISPLAY_MODE_KEY = "dashboard2_display_mode";
 
 let autoFixEnabled = false;
 let autoFixInProgress = false;
@@ -60,8 +61,12 @@ let deviceMetrics = {
 };
 let previewController = null;
 let previewRefreshTimer = null;
+let displayMode = "preview";
+let modeToggleButton = null;
+let reflectionMeasureCanvas = null;
 
 async function setup() {
+  displayMode = loadDisplayMode();
   createLayout();
   const sidebarW = computeSidebarWidth();
   const c = createCanvas(sidebarW, windowHeight);
@@ -76,6 +81,7 @@ async function setup() {
   }
 
   createDomPanels();
+  createModeToggleButton();
   applyBaseUiStyle();
   initAceEditor();
 
@@ -84,12 +90,14 @@ async function setup() {
   logLine("cmd: " + MQTT_CMD_TOPIC);
   logLine("evt: " + MQTT_EVT_TOPIC);
   renderMetrics();
+  applyDisplayMode();
   updateDomLayout();
   setupPreview();
   connectMQTT();
 }
 
 function draw() {
+  if (displayMode === "preview") return;
   background(0, 25, 42);
   drawSidebar();
 }
@@ -256,10 +264,234 @@ function styleLogPanel(el, bg) {
   el.style("border-radius", "10px");
 }
 
+function loadDisplayMode() {
+  try {
+    const saved = window.localStorage.getItem(DISPLAY_MODE_KEY);
+    return saved === "debug" ? "debug" : "preview";
+  } catch (_) {
+    return "preview";
+  }
+}
+
+function setDisplayMode(nextMode) {
+  displayMode = nextMode === "debug" ? "debug" : "preview";
+  try {
+    window.localStorage.setItem(DISPLAY_MODE_KEY, displayMode);
+  } catch (_) {}
+  applyDisplayMode();
+  updateDomLayout();
+}
+
+function toggleDisplayMode() {
+  setDisplayMode(displayMode === "preview" ? "debug" : "preview");
+}
+
+function applyDisplayMode() {
+  if (typeof document === "undefined") return;
+  document.body.classList.toggle("preview-mode", displayMode === "preview");
+  document.body.classList.toggle("debug-mode", displayMode === "debug");
+  if (modeToggleButton) {
+    modeToggleButton.html(displayMode === "preview" ? "Debug" : "Preview");
+  }
+  if (previewController) {
+    previewController.setReflectionText(lastDescription || descriptionDiv?.elt?.textContent || "");
+  }
+  updateReflectionTypography();
+}
+
+function createModeToggleButton() {
+  modeToggleButton = createButton(displayMode === "preview" ? "Debug" : "Preview");
+  modeToggleButton.parent(document.body);
+  modeToggleButton.id("mode-toggle");
+  modeToggleButton.mousePressed(toggleDisplayMode);
+}
+
+function updateReflectionTypography() {
+  if (!descriptionDiv || displayMode !== "preview") return;
+  const style = window.getComputedStyle(descriptionDiv.elt);
+  const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+  const padY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+  const boxW = Math.max(120, descriptionDiv.elt.clientWidth - padX);
+  const boxH = Math.max(80, descriptionDiv.elt.clientHeight - padY);
+  const textValue = lastDescription || descriptionDiv.elt.textContent || "";
+  const fittedSize = fitReflectionTextSize(textValue, boxW, boxH);
+  descriptionDiv.style("font-family", "Georgia, Times New Roman, serif");
+  descriptionDiv.style("font-size", fittedSize + "px");
+  descriptionDiv.style("line-height", (fittedSize * 1.08) + "px");
+}
+
+function reflectionBaseTextSize() {
+  return constrain(min(windowWidth, windowHeight) * 0.11, 42, 110);
+}
+
+function fitReflectionTextSize(content, boxW, boxH) {
+  const textValue = String(content || "");
+  let size = reflectionBaseTextSize();
+  const minSize = 18;
+  while (size > minSize) {
+    const bounds = reflectionFontBoundsForBox(textValue, boxW, size);
+    if (bounds.height <= boxH) return size;
+    size -= 2;
+  }
+  return minSize;
+}
+
+function reflectionFontBoundsForBox(content, boxW, fontSize) {
+  if (!reflectionMeasureCanvas) {
+    reflectionMeasureCanvas = document.createElement("canvas");
+  }
+  const ctx = reflectionMeasureCanvas.getContext("2d");
+  ctx.font = `${fontSize}px Georgia`;
+  const paragraphs = String(content).split("\n");
+  const leadingValue = fontSize * 1.08;
+  let lineCount = 0;
+  for (const paragraph of paragraphs) {
+    const words = paragraph.split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      lineCount += 1;
+      continue;
+    }
+    let line = "";
+    for (const word of words) {
+      const candidate = line ? line + " " + word : word;
+      if (ctx.measureText(candidate).width <= boxW) {
+        line = candidate;
+      } else {
+        if (line) {
+          lineCount += 1;
+          line = word;
+        } else {
+          let chunk = "";
+          for (const ch of word) {
+            const nextChunk = chunk + ch;
+            if (chunk && ctx.measureText(nextChunk).width > boxW) {
+              lineCount += 1;
+              chunk = ch;
+            } else {
+              chunk = nextChunk;
+            }
+          }
+          line = chunk;
+        }
+      }
+    }
+    if (line) lineCount += 1;
+  }
+  return { height: lineCount * leadingValue };
+}
+
+function fitPreviewCanvasTextSize(p, content, boxW, boxH) {
+  const textValue = String(content || "");
+  let size = constrain(min(p.width, p.height) * 0.11, 42, 110);
+  const minSize = 18;
+  while (size > minSize) {
+    p.textSize(size);
+    p.textLeading(size * 1.08);
+    const bounds = previewCanvasFontBounds(p, textValue, boxW);
+    if (bounds.height <= boxH) return size;
+    size -= 2;
+  }
+  return minSize;
+}
+
+function previewCanvasFontBounds(p, content, boxW) {
+  const paragraphs = String(content).split("\n");
+  const leadingValue = p.textAscent() + p.textDescent() + p.textSize() * 0.08;
+  let lineCount = 0;
+  for (const paragraph of paragraphs) {
+    const words = paragraph.split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      lineCount += 1;
+      continue;
+    }
+    let line = "";
+    for (const word of words) {
+      const candidate = line ? line + " " + word : word;
+      if (p.textWidth(candidate) <= boxW) {
+        line = candidate;
+      } else {
+        if (line) {
+          lineCount += 1;
+          line = word;
+        } else {
+          let chunk = "";
+          for (const ch of word) {
+            const nextChunk = chunk + ch;
+            if (chunk && p.textWidth(nextChunk) > boxW) {
+              lineCount += 1;
+              chunk = ch;
+            } else {
+              chunk = nextChunk;
+            }
+          }
+          line = chunk;
+        }
+      }
+    }
+    if (line) lineCount += 1;
+  }
+  return { height: lineCount * leadingValue };
+}
+
+function fitPreviewGraphicsTextSize(g, content, boxW, boxH) {
+  const textValue = String(content || "");
+  let size = constrain(min(g.width, g.height) * 0.11, 42, 110);
+  const minSize = 18;
+  while (size > minSize) {
+    g.textSize(size);
+    g.textLeading(size * 1.08);
+    const bounds = previewGraphicsFontBounds(g, textValue, boxW);
+    if (bounds.height <= boxH) return size;
+    size -= 2;
+  }
+  return minSize;
+}
+
+function previewGraphicsFontBounds(g, content, boxW) {
+  const paragraphs = String(content).split("\n");
+  const leadingValue = g.textAscent() + g.textDescent() + g.textSize() * 0.08;
+  let lineCount = 0;
+  for (const paragraph of paragraphs) {
+    const words = paragraph.split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      lineCount += 1;
+      continue;
+    }
+    let line = "";
+    for (const word of words) {
+      const candidate = line ? line + " " + word : word;
+      if (g.textWidth(candidate) <= boxW) {
+        line = candidate;
+      } else {
+        if (line) {
+          lineCount += 1;
+          line = word;
+        } else {
+          let chunk = "";
+          for (const ch of word) {
+            const nextChunk = chunk + ch;
+            if (chunk && g.textWidth(nextChunk) > boxW) {
+              lineCount += 1;
+              chunk = ch;
+            } else {
+              chunk = nextChunk;
+            }
+          }
+          line = chunk;
+        }
+      }
+    }
+    if (line) lineCount += 1;
+  }
+  return { height: lineCount * leadingValue };
+}
+
 function updateDomLayout() {
-  resizeCanvas(sidebarEl.elt.clientWidth, windowHeight);
+  const sidebarWidth = Math.max(1, sidebarEl.elt.clientWidth || 0);
+  resizeCanvas(sidebarWidth, windowHeight);
   if (aceEditor) aceEditor.resize();
   if (previewController) previewController.resize();
+  updateReflectionTypography();
 }
 
 function connectMQTT() {
@@ -426,6 +658,8 @@ function applyReflectionMessage(msg) {
     if (typeof obj.description === "string") {
       lastDescription = obj.description;
       descriptionDiv.html(lastDescription);
+      if (previewController) previewController.setReflectionText(lastDescription);
+      updateReflectionTypography();
     }
     if (typeof obj.code === "string" && !getEditorValue().trim()) {
       setEditorValue(obj.code);
@@ -507,6 +741,8 @@ async function generateWrenchAndRun() {
     if (out.description) {
       lastDescription = out.description;
       descriptionDiv.html(lastDescription);
+      if (previewController) previewController.setReflectionText(lastDescription);
+      updateReflectionTypography();
       logLine("— ChatGPT description —");
       logLine(out.description);
       logLine("— end description —");
@@ -960,6 +1196,7 @@ function createLayout() {
   reflectionSectionEl = createSection(infoColumnEl, "third", "Reflection");
   metricsSectionEl = createSection(infoColumnEl, "third", "Device Info");
   emptySectionEl = createSection(infoColumnEl, "third", "Preview");
+  reflectionSectionEl.addClass("reflection-section");
   metricsSectionEl.addClass("device-info");
   emptySectionEl.addClass("preview-section");
 }
@@ -1012,6 +1249,7 @@ function setEditorValue(value) {
 
 function setupPreview() {
   previewController = new WrenchPreviewController(previewDiv);
+  previewController.setReflectionText(lastDescription || descriptionDiv?.elt?.textContent || "");
   refreshPreview();
 }
 
@@ -1096,6 +1334,10 @@ class WrenchPreviewController {
     this.startLoop();
   }
 
+  setReflectionText(text) {
+    this.preview3d.setState({ reflectionText: text || "" });
+  }
+
   setSource(source) {
     const next = String(source || "");
     if (next === this.lastSource) return;
@@ -1172,7 +1414,15 @@ class WrenchPreview3D {
     this.hostDiv = hostDiv;
     this.segmentColors = Array.from({ length: 6 }, () => Array.from({ length: 40 }, () => "#000000"));
     this.error = "";
-    this.instance = new p5((p) => this.mountSketch(p), hostDiv.elt);
+    this.reflectionText = "";
+    this.webglLayer = document.createElement("div");
+    this.webglLayer.className = "preview-webgl";
+    this.overlayLayer = document.createElement("div");
+    this.overlayLayer.className = "preview-overlay";
+    this.hostDiv.elt.appendChild(this.webglLayer);
+    this.hostDiv.elt.appendChild(this.overlayLayer);
+    this.instance = new p5((p) => this.mountSketch(p), this.webglLayer);
+    this.textInstance = new p5((p) => this.mountOverlaySketch(p), this.overlayLayer);
   }
 
   mountSketch(p) {
@@ -1180,7 +1430,7 @@ class WrenchPreview3D {
     p.setup = () => {
       const { width, height } = this.getSize();
       const c = p.createCanvas(width, height, p.WEBGL);
-      c.parent(this.hostDiv.elt);
+      c.parent(this.webglLayer);
       p.setAttributes("antialias", true);
     };
 
@@ -1190,7 +1440,7 @@ class WrenchPreview3D {
       p.noStroke();
 
       p.push();
-      p.scale(1.55);
+      p.scale(displayMode === "preview" ? 1.9 : 1.15);
       p.rotateX(-0.25);
       this.drawPyramid(p);
       p.pop();
@@ -1198,6 +1448,38 @@ class WrenchPreview3D {
       if (this.error) {
         this.drawErrorOverlay(p, this.error);
       }
+    };
+
+    p.windowResized = () => this.resize();
+  }
+
+  mountOverlaySketch(p) {
+    this.tp = p;
+    p.setup = () => {
+      const { width, height } = this.getSize();
+      const c = p.createCanvas(width, height);
+      c.parent(this.overlayLayer);
+    };
+
+    p.draw = () => {
+      p.clear();
+      if (displayMode !== "preview" || !this.reflectionText) return;
+
+      const boxX = p.width * 0.06;
+      const boxY = p.height * 0.1;
+      const boxW = p.width * 0.34;
+      const boxH = p.height * 0.8;
+      const fittedSize = fitPreviewGraphicsTextSize(p, this.reflectionText, boxW, boxH);
+
+      p.push();
+      p.noStroke();
+      p.fill(255, 245, 232, 230);
+      p.textFont("Georgia");
+      p.textAlign(p.LEFT, p.TOP);
+      p.textSize(fittedSize);
+      p.textLeading(fittedSize * 1.08);
+      p.text(this.reflectionText, boxX, boxY, boxW, boxH);
+      p.pop();
     };
 
     p.windowResized = () => this.resize();
@@ -1215,10 +1497,12 @@ class WrenchPreview3D {
     if (!this.p) return;
     const { width, height } = this.getSize();
     this.p.resizeCanvas(width, height);
+    if (this.tp) this.tp.resizeCanvas(width, height);
   }
 
-  setState({ segmentColors, error }) {
+  setState({ segmentColors, error, reflectionText }) {
     if (segmentColors) this.segmentColors = segmentColors;
+    if (typeof reflectionText === "string") this.reflectionText = reflectionText;
     this.error = error || "";
   }
 
@@ -1232,9 +1516,12 @@ class WrenchPreview3D {
       { from: [   0, -70,  85 ], to: [   0, 110,  55 ], colors: this.segmentColors[5] || [] }
     ];
 
+    p.push();
+    p.translate(displayMode === "preview" ? 125 : 48, 0, 0);
     for (const tube of tubes) {
       this.drawSegmentedCylinder(p, tube.from, tube.to, tube.colors);
     }
+    p.pop();
   }
 
   drawSegmentedCylinder(p, from, to, colors) {
@@ -1276,6 +1563,7 @@ class WrenchPreview3D {
 
   drawErrorOverlay(p, message) {
     p.push();
+    p.camera();
     p.resetMatrix();
     p.translate(-p.width / 2, -p.height / 2);
     p.noStroke();
