@@ -1219,6 +1219,7 @@ async function fetchDocMarkdown() {
   let md = await res.text();
   md = await injectNewsIntoMarkdown(md);
   md = injectLastPromptIntoMarkdown(md);
+  md = injectReflectorIdIntoMarkdown(md);
   const MAX_CHARS = 24000;
   return md.length > MAX_CHARS ? md.slice(0, MAX_CHARS) : md;
 }
@@ -1227,6 +1228,12 @@ function injectLastPromptIntoMarkdown(md) {
   if (!md) return md;
   const placeholderRegex = /\\?\[last\\?_prompt\\?\]/i;
   return md.replace(placeholderRegex, lastPromptText || "");
+}
+
+function injectReflectorIdIntoMarkdown(md) {
+  if (!md) return md;
+  const placeholderRegex = /\\?\[reflectorid\\?\]/gi;
+  return md.replace(placeholderRegex, selectedPyrId || "reflector1");
 }
 
 async function injectNewsIntoMarkdown(md) {
