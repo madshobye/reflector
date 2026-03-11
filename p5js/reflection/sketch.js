@@ -1,6 +1,8 @@
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 
-const PYR_ID = "reflector1";
+const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
+
+const PYR_ID = getReflectionPyrId();
 const MQTT_REFLECTION_TOPIC = `/glow_dk_cph/${PYR_ID}/reflection`;
 
 let client = null;
@@ -185,4 +187,13 @@ function fontBoundsForBox(content, boxW) {
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
+}
+
+function getReflectionPyrId() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("id");
+    if (id && PYR_ID_OPTIONS.includes(id)) return id;
+  } catch (_) {}
+  return "reflector1";
 }

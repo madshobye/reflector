@@ -85,6 +85,7 @@ let sidebarModelSelect = null;
 let sidebarPyrSelect = null;
 let sidebarAuthButton = null;
 let sidebarShiftrLink = null;
+let sidebarReflectionLink = null;
 let sidebarButtons = {};
 let sidebarSyncTimer = null;
 
@@ -250,6 +251,10 @@ function createSidebarControls() {
   sidebarShiftrLink = createA("https://reflector.cloud.shiftr.io/", "Open Shiftr", "_blank");
   sidebarShiftrLink.parent(wrap);
   sidebarShiftrLink.class("sidebar-link");
+
+  sidebarReflectionLink = createA(reflectionViewUrl(), "Open Reflection", "_blank");
+  sidebarReflectionLink.parent(wrap);
+  sidebarReflectionLink.class("sidebar-link");
 }
 
 function syncSidebarControls() {
@@ -309,6 +314,9 @@ function syncSidebarControls() {
         ? `${selectedPyrId} · ${selectedGptModel}`
         : `${selectedPyrId} · read-only`
     );
+  }
+  if (sidebarReflectionLink) {
+    sidebarReflectionLink.attribute("href", reflectionViewUrl());
   }
 }
 
@@ -495,6 +503,10 @@ function mqttCodeStateTopic(pyrId = selectedPyrId) {
 
 function mqttDashboardSyncTopic(pyrId = selectedPyrId) {
   return `/glow_dk_cph/${pyrId}/dashboard_sync`;
+}
+
+function reflectionViewUrl(pyrId = selectedPyrId) {
+  return `../reflection/?id=${encodeURIComponent(pyrId)}`;
 }
 
 function subscribeReflectorTopics(pyrId = selectedPyrId) {
