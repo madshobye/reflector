@@ -2550,6 +2550,9 @@ class WrenchPreviewRuntime {
       time_local_ymd: () => runtime.time_get().ymd,
       time_set_timezone: () => 1,
       time_sync: () => 1,
+      inbox_has: () => 0,
+      inbox_get: () => "",
+      number: (v) => Number(v) || 0,
       print: () => 0,
       println: () => 0
     };
@@ -2672,6 +2675,7 @@ class WrenchPreviewRuntime {
 
   sdf_set_sphere(i, x, y, z, r, hue, sat, val, alpha) {
     if (typeof i === "object") return this.sdf_update_sphere(i);
+    const prev = this.shapes[i] || {};
     this.shapes[i] = {
       type: "sphere",
       idx: clampIndex(i, Math.max(this.shapes.length || 1, clampIndex(i, 9999) + 1)),
@@ -2682,18 +2686,19 @@ class WrenchPreviewRuntime {
       color: hsvToRgb(hue, sat, val),
       alpha: Number(alpha) || 0.6,
       bias: Number(arguments[9]) || 0.5,
-      paletteId: null,
-      paletteMix: 255,
-      paletteScroll: 0,
-      paletteBright: 255,
-      paletteBlend: 1,
-      material: null
+      paletteId: typeof prev.paletteId === "undefined" ? null : prev.paletteId,
+      paletteMix: typeof prev.paletteMix === "undefined" ? 255 : prev.paletteMix,
+      paletteScroll: typeof prev.paletteScroll === "undefined" ? 0 : prev.paletteScroll,
+      paletteBright: typeof prev.paletteBright === "undefined" ? 255 : prev.paletteBright,
+      paletteBlend: typeof prev.paletteBlend === "undefined" ? 1 : prev.paletteBlend,
+      material: prev.material || null
     };
     return 0;
   }
 
   sdf_set_box(i, x, y, z, w, h, d, hue, sat, val, alpha) {
     if (typeof i === "object") return this.sdf_update_box(i);
+    const prev = this.shapes[i] || {};
     this.shapes[i] = {
       type: "box",
       idx: clampIndex(i, Math.max(this.shapes.length || 1, clampIndex(i, 9999) + 1)),
@@ -2707,12 +2712,12 @@ class WrenchPreviewRuntime {
       alpha: Number(alpha) || 0.6,
       bias: Number(arguments[10]) || 0.5,
       power: Number(arguments[11]) || 2,
-      paletteId: null,
-      paletteMix: 255,
-      paletteScroll: 0,
-      paletteBright: 255,
-      paletteBlend: 1,
-      material: null
+      paletteId: typeof prev.paletteId === "undefined" ? null : prev.paletteId,
+      paletteMix: typeof prev.paletteMix === "undefined" ? 255 : prev.paletteMix,
+      paletteScroll: typeof prev.paletteScroll === "undefined" ? 0 : prev.paletteScroll,
+      paletteBright: typeof prev.paletteBright === "undefined" ? 255 : prev.paletteBright,
+      paletteBlend: typeof prev.paletteBlend === "undefined" ? 1 : prev.paletteBlend,
+      material: prev.material || null
     };
     return 0;
   }
