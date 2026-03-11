@@ -999,10 +999,10 @@ function publishJsonLine(obj) {
   logLine(">>> " + payload.trim());
 }
 
-function publishReflectionUpdate(description, code) {
+function publishReflectionUpdate(reflection, code) {
   if (!client || !isConnected) return;
   const payload = JSON.stringify({
-    description: description || "",
+    reflection: reflection || "",
     code: code || "",
     generated_at: new Date().toISOString(),
     dashboard_id: dashboardInstanceId
@@ -1148,8 +1148,11 @@ function applyReflectionMessage(msg) {
   if (!msg) return;
   try {
     const obj = JSON.parse(msg);
-    if (typeof obj.description === "string") {
-      lastDescription = obj.description;
+    const reflectionText =
+      typeof obj.reflection === "string" ? obj.reflection :
+      (typeof obj.description === "string" ? obj.description : "");
+    if (typeof reflectionText === "string") {
+      lastDescription = reflectionText;
       descriptionDiv.html(lastDescription);
       if (previewController) previewController.setReflectionText(lastDescription);
       updateReflectionTypography();
@@ -1189,8 +1192,11 @@ function applyDashboardSyncMessage(msg) {
         setEditorValue(obj.code);
         refreshPreview();
       }
-      if (typeof obj.description === "string" && obj.description) {
-        lastDescription = obj.description;
+      const reflectionText =
+        typeof obj.reflection === "string" ? obj.reflection :
+        (typeof obj.description === "string" ? obj.description : "");
+      if (typeof reflectionText === "string" && reflectionText) {
+        lastDescription = reflectionText;
         descriptionDiv.html(lastDescription);
         if (previewController) previewController.setReflectionText(lastDescription);
         updateReflectionTypography();
@@ -1310,23 +1316,23 @@ async function generateWrenchAndRun() {
     const out = await openaiGenerateWrenchFromDoc(md);
     if (!out || !out.wrench_code) throw new Error("No wrench_code returned.");
 
-    if (out.description) {
-      lastDescription = out.description;
+    if (out.reflection) {
+      lastDescription = out.reflection;
       descriptionDiv.html(lastDescription);
       if (previewController) previewController.setReflectionText(lastDescription);
       updateReflectionTypography();
-      logLine("— ChatGPT description —");
-      logLine(out.description);
-      logLine("— end description —");
+      logLine("— ChatGPT reflection —");
+      logLine(out.reflection);
+      logLine("— end reflection —");
     }
 
     setEditorValue(out.wrench_code);
-    lastPromptText = out.description || "";
+    lastPromptText = out.reflection || "";
     refreshPreview();
     publishJsonLine({ cmd: "run_now", code: out.wrench_code });
-    publishReflectionUpdate(out.description, out.wrench_code);
+    publishReflectionUpdate(out.reflection, out.wrench_code);
     publishCodeState(out.wrench_code, "generate");
-    publishDashboardSync("code_update", { code: out.wrench_code, description: out.description || "" });
+    publishDashboardSync("code_update", { code: out.wrench_code, reflection: out.reflection || "" });
     logLine("Sent run_now with generated code (" + out.wrench_code.length + " chars).");
 
     if (automationEnabled) {
@@ -1542,15 +1548,15 @@ async function openaiGenerateWrenchFromDoc(docMd) {
       type: "function",
       function: {
         name: "generate_wrench",
-        description: "Return a concise description of the concept and valid Wrench code implementing it.",
+        description: "Return a concise reflection on the concept and valid Wrench code implementing it.",
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
-            description: { type: "string" },
+            reflection: { type: "string" },
             wrench_code: { type: "string" }
           },
-          required: ["description", "wrench_code"]
+          required: ["reflection", "wrench_code"]
         }
       }
     }
@@ -1583,7 +1589,7 @@ async function openaiGenerateWrenchFromDoc(docMd) {
           "```",
           "",
           "Deliver:",
-          "1) a short description of what you generated",
+          "1) a short reflection on what you generated",
           "2) the full Wrench code"
         ].join("\n")
       }
@@ -1652,7 +1658,7 @@ async function autoFixWrenchAndRun(errText) {
     if (fixed.description) logLine(fixed.description);
     publishJsonLine({ cmd: "run_now", code: fixed.wrench_code });
     publishCodeState(fixed.wrench_code, "auto_fix");
-    publishDashboardSync("code_update", { code: fixed.wrench_code, description: fixed.description || "" });
+    publishDashboardSync("code_update", { code: fixed.wrench_code, reflection: fixed.description || "" });
     logLine("Sent run_now with fixed code.");
   } catch (e) {
     logLine("Auto-fix failed: " + (e && e.message ? e.message : e));
@@ -2491,7 +2497,7 @@ class WrenchPreviewRuntime {
       TUBES: 6,
       STRIPS_PER_TUBE: 4,
       SDF_STRIP_BITS: 24,
-      STRIP_LEN: 892,
+      STRIP_LEN: 223,
       TOTAL_LEDS: 5352,
       SDF_SPHERE: 0,
       SDF_BOX: 1,
@@ -2502,13 +2508,13 @@ class WrenchPreviewRuntime {
         this.y = 0;
         this.z = 0;
       },
-      math: Math,
+      math: createPreviewMathScope(),
       int: (v) => Math.trunc(Number(v) || 0),
       millis: () => runtime.millis(),
       leds_begin: () => 1,
       leds_total: () => TOTAL_PREVIEW_LEDS,
       leds_strip_count: () => 6,
-      leds_strip_len: () => 892,
+      leds_strip_len: () => 223,
       leds_set_brightness: (b) => { runtime.brightness = Number(b) || 0; return 0; },
       leds_get_brightness: () => runtime.brightness,
       leds_clear: () => runtime.leds_clear(),
@@ -2543,6 +2549,7 @@ class WrenchPreviewRuntime {
       tube_xyz3: (tube, t01) => runtime.tube_xyz(tube, t01, 1),
       tube_xyz_out: (tube, t01, outVec3) => runtime.tube_xyz_out(tube, t01, outVec3),
       tube_lerp: (tube, t01, which) => runtime.tube_lerp(tube, t01, which),
+      lerp: (a, b, t) => runtime.lerp(a, b, t),
       lerp3: (a, b, t) => runtime.lerp3(a, b, t),
       lerp_color: (a, b, t) => runtime.lerp_color(a, b, t),
       time_get: () => runtime.time_get(),
@@ -2857,6 +2864,13 @@ class WrenchPreviewRuntime {
     return 1;
   }
 
+  lerp(a, b, t) {
+    const aa = Number(a) || 0;
+    const bb = Number(b) || 0;
+    const k = Math.max(0, Math.min(1, Number(t) || 0));
+    return aa + (bb - aa) * k;
+  }
+
   lerp3(a, b, t) {
     const k = Math.max(0, Math.min(1, Number(t) || 0));
     this.tempVecC.x = (a.x || 0) + ((b.x || 0) - (a.x || 0)) * k;
@@ -2958,7 +2972,9 @@ class WrenchPreviewRuntime {
   }
 
   pickShapeColor(shape, falloff) {
-    if (!shape.paletteId || !this.palettes[shape.paletteId]) return shape.color;
+    if (shape.paletteId === null || typeof shape.paletteId === "undefined" || !this.palettes[shape.paletteId]) {
+      return shape.color;
+    }
     const pal = this.palettes[shape.paletteId];
     const scroll = ((shape.paletteScroll || 0) + this.lastTexTimeMs * 0.001) * 0.01;
     const idxF = ((1 - falloff) * 2 + scroll) % 3;
@@ -2966,9 +2982,10 @@ class WrenchPreviewRuntime {
     const idx1 = (idx0 + 1) % 3;
     const frac = ((idxF % 1) + 1) % 1;
     const palColor = mixRgb(pal[idx0], pal[idx1], frac);
-    const mixAmt = Math.max(0, Math.min(1, (shape.paletteMix || 0) / 255));
-    const bright = Math.max(0, Math.min(1.4, (shape.paletteBright || 255) / 255));
-    const mixed = mixRgb(shape.color, palColor, mixAmt * (shape.paletteBlend || 1));
+    const mixAmt = normalizePreviewPaletteScalar(shape.paletteMix, 0);
+    const bright = normalizePreviewPaletteScalar(shape.paletteBright, 1);
+    const blend = normalizePreviewPaletteScalar(shape.paletteBlend, 1);
+    const mixed = mixRgb(shape.color, palColor, mixAmt * blend);
     return {
       r: Math.min(255, mixed.r * bright),
       g: Math.min(255, mixed.g * bright),
@@ -2985,23 +3002,29 @@ class WrenchPreviewRuntime {
     const out = [];
     for (let tube = 0; tube < 6; tube++) {
       const row = [];
-      if (this.directTubeTouched[tube]) {
-        const hex = rgbToHex(this.tubeColors[tube]);
-        for (let s = 0; s < segmentsPerTube; s++) row.push(hex);
-        out.push(row);
-        continue;
-      }
-
       for (let s = 0; s < segmentsPerTube; s++) {
         const u0 = s / segmentsPerTube;
         const u1 = (s + 1) / segmentsPerTube;
         const c0 = this.sampleSceneAtTube(tube, u0 + (u1 - u0) * 0.25);
         const c1 = this.sampleSceneAtTube(tube, u0 + (u1 - u0) * 0.75);
-        row.push(rgbToHex(applyBrightness({
+        const baseColor = {
           r: (c0.r + c1.r) * 0.5,
           g: (c0.g + c1.g) * 0.5,
           b: (c0.b + c1.b) * 0.5
-        }, this.brightness)));
+        };
+        const directColor = this.sampleDirectTubeSegment(tube, u0, u1);
+        row.push(
+          rgbToHex(
+            applyBrightness(
+              {
+                r: Math.min(255, baseColor.r + directColor.r),
+                g: Math.min(255, baseColor.g + directColor.g),
+                b: Math.min(255, baseColor.b + directColor.b)
+              },
+              this.brightness
+            )
+          )
+        );
       }
       out.push(row);
     }
@@ -3011,6 +3034,36 @@ class WrenchPreviewRuntime {
   sampleSceneAtTube(tube, u) {
     const p = this.samplePoint(tube, u);
     return this.sampleSceneAt(p.x, p.y, p.z);
+  }
+
+  sampleDirectTubeSegment(tube, u0, u1) {
+    const start = clampIndex(Math.floor(u0 * 892), 892);
+    const end = clampIndex(Math.ceil(u1 * 892), 892);
+    let sumR = 0;
+    let sumG = 0;
+    let sumB = 0;
+    let count = 0;
+    let maxR = 0;
+    let maxG = 0;
+    let maxB = 0;
+    for (let idx = start; idx <= end; idx++) {
+      const c = this.directPixels[tube * 892 + idx];
+      if (!c) continue;
+      if ((c.r || 0) <= 0 && (c.g || 0) <= 0 && (c.b || 0) <= 0) continue;
+      sumR += c.r || 0;
+      sumG += c.g || 0;
+      sumB += c.b || 0;
+      count += 1;
+      maxR = Math.max(maxR, c.r || 0);
+      maxG = Math.max(maxG, c.g || 0);
+      maxB = Math.max(maxB, c.b || 0);
+    }
+    if (!count) return { r: 0, g: 0, b: 0 };
+    return {
+      r: Math.max(sumR / count, maxR * 0.65),
+      g: Math.max(sumG / count, maxG * 0.65),
+      b: Math.max(sumB / count, maxB * 0.65)
+    };
   }
 }
 
@@ -3050,6 +3103,25 @@ function mixRgb(a, b, t) {
     g: a.g + (b.g - a.g) * k,
     b: a.b + (b.b - a.b) * k
   };
+}
+
+function createPreviewMathScope() {
+  const mathScope = Object.create(Math);
+  mathScope.fmod = (a, b) => {
+    const aa = Number(a) || 0;
+    const bb = Number(b) || 0;
+    if (!bb) return 0;
+    return aa - Math.trunc(aa / bb) * bb;
+  };
+  return mathScope;
+}
+
+function normalizePreviewPaletteScalar(value, defaultValue) {
+  if (value === null || typeof value === "undefined") return defaultValue;
+  const n = Number(value);
+  if (Number.isNaN(n)) return defaultValue;
+  if (n <= 1.4) return Math.max(0, n);
+  return Math.max(0, n / 255);
 }
 
 function applyBrightness(color, brightness) {
