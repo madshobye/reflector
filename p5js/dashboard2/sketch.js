@@ -17,7 +17,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v21";
+const DASHBOARD2_VERSION = "v22";
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -3052,26 +3052,28 @@ class WrenchPreviewRuntime {
   }
 
   sdf_set_palette(i, paletteId, mix, scroll, bright, blend) {
-    if (this.shapes[i]) {
-      this.shapes[i].paletteId = paletteId;
-      this.shapes[i].paletteMix = Number(mix) || 0;
-      this.shapes[i].paletteScroll = Number(scroll) || 0;
-      this.shapes[i].paletteBright = typeof bright === "undefined" ? 255 : Number(bright) || 0;
-      this.shapes[i].paletteBlend = typeof blend === "undefined" ? 1 : Number(blend) || 0;
+    if (!this.shapes[i]) {
+      this.shapes[i] = { idx: clampIndex(i, Math.max(this.shapes.length || 1, clampIndex(i, 9999) + 1)) };
     }
+    this.shapes[i].paletteId = paletteId;
+    this.shapes[i].paletteMix = Number(mix) || 0;
+    this.shapes[i].paletteScroll = Number(scroll) || 0;
+    this.shapes[i].paletteBright = typeof bright === "undefined" ? 255 : Number(bright) || 0;
+    this.shapes[i].paletteBlend = typeof blend === "undefined" ? 1 : Number(blend) || 0;
     return 0;
   }
 
   sdf_set_material(i, texId, cellCm, strength, seed, mode) {
-    if (this.shapes[i]) {
-      this.shapes[i].material = {
-        texId: Number(texId) || 0,
-        cellCm: Math.max(0.001, Number(cellCm) || 1),
-        strength: Number(strength) || 0,
-        seed: Number(seed) || 0,
-        mode: Number(mode) || 0
-      };
+    if (!this.shapes[i]) {
+      this.shapes[i] = { idx: clampIndex(i, Math.max(this.shapes.length || 1, clampIndex(i, 9999) + 1)) };
     }
+    this.shapes[i].material = {
+      texId: Number(texId) || 0,
+      cellCm: Math.max(0.001, Number(cellCm) || 1),
+      strength: Number(strength) || 0,
+      seed: Number(seed) || 0,
+      mode: Number(mode) || 0
+    };
     return 0;
   }
 
