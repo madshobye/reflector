@@ -17,7 +17,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v2";
+const DASHBOARD2_VERSION = "v3";
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -44,8 +44,7 @@ const dashboardInstanceId = "dashboard2-" + Math.floor(Math.random() * 1e9) + "-
 
 let OPENAI_API_KEY = "";
 let mqttKey = "";
-let apiKeyEncryptedGpt =
-  "U2FsdGVkX18ufo+Jv5eV1uiVVu23Jjvr8SaHfqG2rnsUq75hmr1av/B4KStyhTJtJwMgyyM6CP9gKXuUEu8F2m52Ey+wyLSiuI34pcMYOnPOVrngAAE3EMJg1Sx52sdns3JzqQHJgma6chold+TcfgeYqG/4O8wdRiKLz64Ic+v9uB+xDrzxJ2Cazu4En9yWPTKskgvccEn3ls0+zVGacW1zLaNyJXmzm+yHE0mkro+a/5lWzZFRT6UX6+HVEgqi";
+let apiKeyEncryptedGpt ="U2FsdGVkX18009lW4clpttBLCMAsuBYgQZRiEWcsqhqoPwnEL0ka5JbJOwVlkKco88ToU9L42cPy5j++dtaCm1KgO8vV/dMe6bpMDrWs0IXjElBPml1tj8jUIj+oeLXzZuMTtYgGQfyPW+PxU+VtINE4kAvccUD2vXYgym3SYYUm0rD2RNguEmSzU+660DXYPix5qEnRFAHRUSnDdISYulwc8WNBF3gUQl1VEpUg7Ku9G2gCG6dTZ/JoJ6ZELr8W"
 let mqttKeyEncrypted = "U2FsdGVkX1+f60bzOgPSBUTFJpFtLdWNgjs5QTNiW9BsDukPIRX8VtphcNDQ/bqS";
 
 let client = null;
@@ -473,14 +472,54 @@ function clearStoredAuthPasswords() {
   } catch (_) {}
 }
 
-function loginAuthenticatedMode() {
-  const mqttPassword = window.prompt("Please enter MQTT password (mqttKeyEncrypted):", "");
-  if (!mqttPassword) return;
-  const gptPassword = window.prompt("Please enter ChatGPT password (apiKeyEncryptedGpt):", "");
-  if (!gptPassword) return;
+function bootstrapEncryptedSecret(secretName) {
+  const rawKey = window.prompt("Please enter key:", "");
+  if (!rawKey) return null;
+  const password = window.prompt("Please enter password for " + secretName + ":", "");
+  if (!password) return null;
+  const encryptedKey = encryptKey(rawKey, password);
+  const encryptedText = String(encryptedKey || "");
+  const snippet = 'let ' + secretName + ' ="' + encryptedText + '"';
+  console.log("##### INSERT THE CODE BELOW IN YOUR SKETCH ###");
+  console.log(snippet);
+  logLine("Generated encrypted key for " + secretName + ". Check the browser console for the code snippet.");
+  return {
+    encryptedText,
+    password,
+    rawKey
+  };
+}
 
-  const nextMqttKey = decryptKey(mqttKeyEncrypted, mqttPassword);
-  const nextOpenAiKey = decryptKey(apiKeyEncryptedGpt, gptPassword);
+function loginAuthenticatedMode() {
+  let mqttPassword = "";
+  let gptPassword = "";
+  let nextMqttKey = "";
+  let nextOpenAiKey = "";
+
+  if (!mqttKeyEncrypted) {
+    const boot = bootstrapEncryptedSecret("mqttKeyEncrypted");
+    if (!boot) return;
+    mqttKeyEncrypted = boot.encryptedText;
+    mqttPassword = boot.password;
+    nextMqttKey = boot.rawKey;
+  } else {
+    mqttPassword = window.prompt("Please enter MQTT password (mqttKeyEncrypted):", "");
+    if (!mqttPassword) return;
+    nextMqttKey = decryptKey(mqttKeyEncrypted, mqttPassword);
+  }
+
+  if (!apiKeyEncryptedGpt) {
+    const boot = bootstrapEncryptedSecret("apiKeyEncryptedGpt");
+    if (!boot) return;
+    apiKeyEncryptedGpt = boot.encryptedText;
+    gptPassword = boot.password;
+    nextOpenAiKey = boot.rawKey;
+  } else {
+    gptPassword = window.prompt("Please enter ChatGPT password (apiKeyEncryptedGpt):", "");
+    if (!gptPassword) return;
+    nextOpenAiKey = decryptKey(apiKeyEncryptedGpt, gptPassword);
+  }
+
   if (!nextMqttKey || !nextOpenAiKey) {
     logLine("Login failed: invalid password.");
     return;
@@ -544,6 +583,7 @@ function reflectionViewUrl(pyrId = selectedPyrId) {
 }
 
 function subscribeReflectorTopics(pyrId = selectedPyrId) {
+  if (!client) return;
   client.subscribe(mqttEvtTopic(pyrId), (err) => {
     if (err) logLine("Subscribe error: " + err);
     else logLine("Subscribed: " + mqttEvtTopic(pyrId));
@@ -868,8 +908,10 @@ function connectMQTT() {
     reconnectPeriod: 1000,
     connectTimeout: 5000
   });
+  const socket = client;
 
-  client.on("connect", () => {
+  socket.on("connect", () => {
+    if (client !== socket || !socket) return;
     isConnected = true;
     statusText = isAuthenticated ? "MQTT connected" : "MQTT connected (read-only)";
     logLine(isAuthenticated ? "MQTT connected." : "MQTT connected in read-only mode.");
@@ -880,13 +922,15 @@ function connectMQTT() {
     }
   });
 
-  client.on("reconnect", () => {
+  socket.on("reconnect", () => {
+    if (client !== socket || !socket) return;
     statusText = "MQTT reconnecting";
     logLine("MQTT reconnecting...");
     syncSidebarControls();
   });
 
-  client.on("close", () => {
+  socket.on("close", () => {
+    if (client !== socket) return;
     isConnected = false;
     statusText = "MQTT closed";
     logLine("MQTT closed.");
@@ -895,13 +939,15 @@ function connectMQTT() {
     syncSidebarControls();
   });
 
-  client.on("error", (err) => {
+  socket.on("error", (err) => {
+    if (client !== socket && client !== null) return;
     statusText = "MQTT error";
     logLine("MQTT error: " + err);
     syncSidebarControls();
   });
 
-  client.on("message", (topic, message) => {
+  socket.on("message", (topic, message) => {
+    if (client !== socket) return;
     const s = message ? message.toString() : "";
     if (topic === mqttReflectionTopic()) {
       applyReflectionMessage(s);
@@ -3186,23 +3232,11 @@ function addScaledPlaneCorner(center, u, v, su, sv) {
 function hexToRgb(hex) {
   const raw = String(hex || "#000000").replace("#", "").padStart(6, "0");
   const value = parseInt(raw.slice(0, 6), 16);
-  const rgb = {
+  return {
     r: (value >> 16) & 255,
     g: (value >> 8) & 255,
     b: value & 255
   };
-  if (rgb.r <= 2 && rgb.g <= 2 && rgb.b <= 2) {
-    return { r: 16, g: 16, b: 16 };
-  }
-  const minChannel = 10;
-  if (rgb.r <= minChannel && rgb.g <= minChannel && rgb.b <= minChannel) {
-    return {
-      r: Math.round(rgb.r * 0.35 + 14),
-      g: Math.round(rgb.g * 0.35 + 14),
-      b: Math.round(rgb.b * 0.35 + 14)
-    };
-  }
-  return rgb;
 }
 
 function escapeHtml(s) {
