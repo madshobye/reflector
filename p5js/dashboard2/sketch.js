@@ -288,7 +288,7 @@ function syncSidebarControls() {
   updateSidebarButton("storeOnly", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "mid" : "off" });
   updateSidebarButton("runStore", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "mid" : "off" });
   updateSidebarButton("reboot", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "low" : "off" });
-  updateSidebarButton("generate", { disabled: !isConnected || generationInProgress || !isAuthenticated, tone: isConnected && !generationInProgress && isAuthenticated ? "mid" : "off" });
+  updateSidebarButton("generate", { disabled: !isConnected || generationInProgress || !isAuthenticated, tone: isConnected && !generationInProgress && isAuthenticated ? "amber" : "off" });
   updateSidebarButton("debugDownloads", { label: debugDownloadsEnabled ? "Debug: ON" : "Debug: OFF", disabled: false, tone: debugDownloadsEnabled ? "high" : "low" });
   updateSidebarButton("autoFix", { label: autoFixEnabled ? "Auto-fix: ON" : "Auto-fix: OFF", disabled: !isAuthenticated, tone: autoFixEnabled && isAuthenticated ? "high" : "off" });
   updateSidebarButton("automationInterval", { label: automationIntervalLabel(), disabled: !isAuthenticated, tone: automationIntervalMinutes === 0 && isAuthenticated ? "high" : (isAuthenticated ? "low" : "off") });
@@ -1104,6 +1104,25 @@ function maybeDownloadPyramidError(msg) {
   } catch (_) {}
 }
 
+function maybeDownloadRssFailure(feedUrl, stage, payload, err) {
+  if (!debugDownloadsEnabled) return;
+  const safeName = String(feedUrl || "feed")
+    .replace(/^https?:\/\//i, "")
+    .replace(/[^a-z0-9._-]+/gi, "_")
+    .slice(0, 80);
+  downloadBrowserFile(
+    `${selectedPyrId}-rss-${stage}-${safeName}-${debugTimestampSlug()}.txt`,
+    [
+      "feed_url: " + (feedUrl || ""),
+      "stage: " + (stage || "unknown"),
+      "error: " + (err && err.message ? err.message : String(err || "")),
+      "",
+      String(payload || "")
+    ].join("\n"),
+    "text/plain;charset=utf-8"
+  );
+}
+
 function applyRemoteConsoleMessage(msg) {
   if (!msg) return;
   try {
@@ -1372,6 +1391,9 @@ async function injectNewsIntoMarkdown(md) {
       sections.push(lines.join("\n\n"));
       successCount++;
     } catch (err) {
+      if (err && err.feedXml) {
+        maybeDownloadRssFailure(feedUrl, "parse", err.feedXml, err);
+      }
       logLine("News debug [" + feedUrl + "]: failed: " + (err && err.message ? err.message : err));
     }
   }
@@ -1452,9 +1474,14 @@ async function fetchFeedText(url) {
 }
 
 function parseRssItems(xmlText, maxItems) {
+  const normalizedXmlText = normalizeFeedXml(xmlText);
   const parser = new DOMParser();
-  const xml = parser.parseFromString(xmlText, "text/xml");
-  if (xml.querySelector("parsererror")) throw new Error("RSS parse failed");
+  const xml = parser.parseFromString(normalizedXmlText, "text/xml");
+  if (xml.querySelector("parsererror")) {
+    const err = new Error("RSS parse failed");
+    err.feedXml = normalizedXmlText;
+    throw err;
+  }
   return Array.from(xml.querySelectorAll("item"))
     .slice(0, maxItems)
     .map((item) => ({
@@ -1466,6 +1493,41 @@ function parseRssItems(xmlText, maxItems) {
 function getXmlNodeText(parent, tagName) {
   const node = parent.querySelector(tagName);
   return node ? node.textContent : "";
+}
+
+function normalizeFeedXml(xmlText) {
+  const text = String(xmlText || "").trim();
+  if (!text.startsWith("data:")) return text;
+
+  const commaIdx = text.indexOf(",");
+  if (commaIdx < 0) return text;
+  const meta = text.slice(5, commaIdx).toLowerCase();
+  const body = text.slice(commaIdx + 1);
+
+  try {
+    if (meta.includes(";base64")) {
+      return decodeBase64Utf8(body);
+    }
+    return decodeURIComponent(body);
+  } catch (_) {
+    return text;
+  }
+}
+
+function decodeBase64Utf8(base64Text) {
+  const binary = atob(base64Text);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  if (typeof TextDecoder !== "undefined") {
+    return new TextDecoder("utf-8").decode(bytes);
+  }
+  let escaped = "";
+  for (let i = 0; i < bytes.length; i++) {
+    escaped += "%" + bytes[i].toString(16).padStart(2, "0");
+  }
+  return decodeURIComponent(escaped);
 }
 
 function cleanNewsText(text) {
@@ -1894,6 +1956,19 @@ const PREVIEW_TUBE_ENDPOINTS = [
   [{ x: 8.625, y: 102.266, z: -4.98 }, { x: 86.375, y: -24.699, z: -49.869 }],
   [{ x: 0.0, y: -24.699, z: 99.737 }, { x: 0.0, y: 102.266, z: 9.959 }]
 ];
+const TOTAL_PREVIEW_LEDS = 5352;
+
+function createBuiltinPreviewPalettes() {
+  return {
+    0: [hsvToRgb(0, 255, 255), hsvToRgb(96, 255, 255), hsvToRgb(170, 255, 255)],
+    1: [hsvToRgb(0, 255, 80), hsvToRgb(18, 255, 180), hsvToRgb(32, 255, 255)],
+    2: [hsvToRgb(140, 255, 80), hsvToRgb(170, 255, 180), hsvToRgb(190, 80, 255)],
+    3: [hsvToRgb(70, 255, 50), hsvToRgb(90, 255, 120), hsvToRgb(120, 180, 220)],
+    4: [hsvToRgb(200, 255, 255), hsvToRgb(20, 255, 255), hsvToRgb(140, 255, 255)],
+    5: [hsvToRgb(4, 255, 50), hsvToRgb(24, 255, 180), hsvToRgb(42, 40, 255)],
+    6: [hsvToRgb(18, 255, 40), hsvToRgb(28, 220, 120), hsvToRgb(38, 180, 220)]
+  };
+}
 
 class WrenchPreviewController {
   constructor(hostDiv) {
@@ -2396,11 +2471,17 @@ class WrenchPreviewRuntime {
     this.startMs = performance.now();
     this.brightness = 255;
     this.shapes = [];
-    this.palettes = {};
+    this.palettes = createBuiltinPreviewPalettes();
     this.tubeColors = Array.from({ length: 6 }, () => ({ r: 0, g: 0, b: 0 }));
     this.directTubeTouched = Array.from({ length: 6 }, () => false);
     this.directAccum = Array.from({ length: 6 }, () => ({ r: 0, g: 0, b: 0, count: 0, maxR: 0, maxG: 0, maxB: 0 }));
+    this.directPixels = Array.from({ length: TOTAL_PREVIEW_LEDS }, () => ({ r: 0, g: 0, b: 0 }));
     this.noiseSeedValue = 1;
+    this.tempVecA = { x: 0, y: 0, z: 0 };
+    this.tempVecB = { x: 0, y: 0, z: 0 };
+    this.tempVecC = { x: 0, y: 0, z: 0 };
+    this.tempTime = { valid: 1, epoch: 0, ymd: 0, h: 0, m: 0, s: 0, seconds: 0 };
+    this.lastTexTimeMs = 0;
   }
 
   createScope() {
@@ -2408,27 +2489,67 @@ class WrenchPreviewRuntime {
     return {
       STRIPS: 6,
       TUBES: 6,
+      STRIPS_PER_TUBE: 4,
+      SDF_STRIP_BITS: 24,
+      STRIP_LEN: 892,
       TOTAL_LEDS: 5352,
+      SDF_SPHERE: 0,
+      SDF_BOX: 1,
+      SDF_UNITS: "cm",
+      SDF_STEP_MM: 0.25,
       math: Math,
       int: (v) => Math.trunc(Number(v) || 0),
       millis: () => runtime.millis(),
       leds_begin: () => 1,
+      leds_total: () => TOTAL_PREVIEW_LEDS,
+      leds_strip_count: () => 6,
+      leds_strip_len: () => 892,
       leds_set_brightness: (b) => { runtime.brightness = Number(b) || 0; return 0; },
+      leds_get_brightness: () => runtime.brightness,
       leds_clear: () => runtime.leds_clear(),
       leds_set_pixel: (...args) => runtime.leds_set_pixel(...args),
+      leds_set_pixel_c: (...args) => runtime.leds_set_pixel(...args),
+      leds_get_pixel_c: (...args) => runtime.leds_get_pixel_c(...args),
       leds_show: () => runtime.leds_show(),
+      create_Color: () => ({ r: 0, g: 0, b: 0 }),
       sdf_set_count: (n) => runtime.sdf_set_count(n),
       sdf_palette_hsv3: (...args) => runtime.sdf_palette_hsv3(...args),
+      sdf_palette_rgb3: (...args) => runtime.sdf_palette_rgb3(...args),
       sdf_set_sphere: (...args) => runtime.sdf_set_sphere(...args),
+      create_Sphere: () => runtime.create_Sphere(),
+      sdf_update_sphere: (shape) => runtime.sdf_update_sphere(shape),
+      sdf_set_box: (...args) => runtime.sdf_set_box(...args),
+      create_Box: () => runtime.create_Box(),
+      sdf_update_box: (shape) => runtime.sdf_update_box(shape),
+      sdf_set_shape: (...args) => runtime.sdf_set_shape(...args),
       sdf_set_palette: (...args) => runtime.sdf_set_palette(...args),
       sdf_set_material: (...args) => runtime.sdf_set_material(...args),
       sdf_set_tex_time: (...args) => runtime.sdf_set_tex_time(...args),
+      sdf_get_count: () => runtime.shapes.length,
       sdf_render: () => runtime.sdf_render(),
       noise_seed: (seed) => runtime.noise_seed(seed),
       randomSeed: (seed) => runtime.randomSeed(seed),
       simplex3: (x, y, z) => runtime.simplex3(x, y, z),
       simplex3_01: (x, y, z) => runtime.simplex3_01(x, y, z),
+      tube_endpoints: (...args) => runtime.tube_endpoints(...args),
+      tube_endpoints3: (tube) => runtime.tube_endpoints(tube, 1),
+      tube_endpoints_out: (tube, outA, outB) => runtime.tube_endpoints_out(tube, outA, outB),
+      tube_xyz: (...args) => runtime.tube_xyz(...args),
+      tube_xyz3: (tube, t01) => runtime.tube_xyz(tube, t01, 1),
+      tube_xyz_out: (tube, t01, outVec3) => runtime.tube_xyz_out(tube, t01, outVec3),
       tube_lerp: (tube, t01, which) => runtime.tube_lerp(tube, t01, which),
+      lerp3: (a, b, t) => runtime.lerp3(a, b, t),
+      lerp_color: (a, b, t) => runtime.lerp_color(a, b, t),
+      time_get: () => runtime.time_get(),
+      time_is_valid: () => 1,
+      time_now: () => runtime.time_now(),
+      time_local_seconds: () => runtime.time_local_seconds(),
+      time_local_hour: () => runtime.time_get().h,
+      time_local_minute: () => runtime.time_get().m,
+      time_local_second: () => runtime.time_get().s,
+      time_local_ymd: () => runtime.time_get().ymd,
+      time_set_timezone: () => 1,
+      time_sync: () => 1,
       print: () => 0,
       println: () => 0
     };
@@ -2442,26 +2563,52 @@ class WrenchPreviewRuntime {
     this.tubeColors = Array.from({ length: 6 }, () => ({ r: 0, g: 0, b: 0 }));
     this.directTubeTouched = Array.from({ length: 6 }, () => false);
     this.directAccum = Array.from({ length: 6 }, () => ({ r: 0, g: 0, b: 0, count: 0, maxR: 0, maxG: 0, maxB: 0 }));
+    this.directPixels = Array.from({ length: TOTAL_PREVIEW_LEDS }, () => ({ r: 0, g: 0, b: 0 }));
     return 0;
   }
 
   leds_set_pixel(...args) {
     if (args.length >= 5) {
       const strip = clampIndex(args[0], 6);
-      this.addDirectPixel(strip, args[2], args[3], args[4]);
+      const idx = clampIndex(args[1], 892);
+      this.addDirectPixel(strip, idx, args[2], args[3], args[4]);
     } else if (args.length >= 4) {
-      const perTube = 5352 / 6;
-      const strip = clampIndex(Math.floor((Number(args[0]) || 0) / perTube), 6);
-      this.addDirectPixel(strip, args[1], args[2], args[3]);
+      if (typeof args[1] === "object") {
+        const pos = clampIndex(args[0], TOTAL_PREVIEW_LEDS);
+        const strip = clampIndex(Math.floor(pos / 892), 6);
+        const idx = pos - strip * 892;
+        this.addDirectPixel(strip, idx, args[1].r, args[1].g, args[1].b);
+      } else {
+        const pos = clampIndex(args[0], TOTAL_PREVIEW_LEDS);
+        const strip = clampIndex(Math.floor(pos / 892), 6);
+        const idx = pos - strip * 892;
+        this.addDirectPixel(strip, idx, args[1], args[2], args[3]);
+      }
+    } else if (args.length >= 3 && typeof args[2] === "object") {
+      const strip = clampIndex(args[0], 6);
+      const idx = clampIndex(args[1], 892);
+      this.addDirectPixel(strip, idx, args[2].r, args[2].g, args[2].b);
     }
     return 0;
   }
 
-  addDirectPixel(strip, r, g, b) {
+  leds_get_pixel_c(...args) {
+    let pos = 0;
+    if (args.length >= 2) {
+      pos = clampIndex(args[0], 6) * 892 + clampIndex(args[1], 892);
+    } else {
+      pos = clampIndex(args[0], TOTAL_PREVIEW_LEDS);
+    }
+    const c = this.directPixels[pos] || { r: 0, g: 0, b: 0 };
+    return { r: c.r, g: c.g, b: c.b };
+  }
+
+  addDirectPixel(strip, idx, r, g, b) {
     const bucket = this.directAccum[strip];
     const rr = Number(r) || 0;
     const gg = Number(g) || 0;
     const bb = Number(b) || 0;
+    this.directPixels[strip * 892 + idx] = { r: rr, g: gg, b: bb };
     if (rr > 0 || gg > 0 || bb > 0) {
       bucket.r += rr;
       bucket.g += gg;
@@ -2514,26 +2661,105 @@ class WrenchPreviewRuntime {
     return 0;
   }
 
+  sdf_palette_rgb3(id, r1, g1, b1, r2, g2, b2, r3, g3, b3) {
+    this.palettes[id] = [
+      { r: Number(r1) || 0, g: Number(g1) || 0, b: Number(b1) || 0 },
+      { r: Number(r2) || 0, g: Number(g2) || 0, b: Number(b2) || 0 },
+      { r: Number(r3) || 0, g: Number(g3) || 0, b: Number(b3) || 0 }
+    ];
+    return 0;
+  }
+
   sdf_set_sphere(i, x, y, z, r, hue, sat, val, alpha) {
+    if (typeof i === "object") return this.sdf_update_sphere(i);
     this.shapes[i] = {
       type: "sphere",
+      idx: clampIndex(i, Math.max(this.shapes.length || 1, clampIndex(i, 9999) + 1)),
       x: Number(x) || 0,
       y: Number(y) || 0,
       z: Number(z) || 0,
       r: Math.max(1, Number(r) || 1),
       color: hsvToRgb(hue, sat, val),
       alpha: Number(alpha) || 0.6,
-      paletteId: null
+      bias: Number(arguments[9]) || 0.5,
+      paletteId: null,
+      paletteMix: 255,
+      paletteScroll: 0,
+      paletteBright: 255,
+      paletteBlend: 1,
+      material: null
     };
     return 0;
   }
 
-  sdf_set_palette(i, paletteId) {
-    if (this.shapes[i]) this.shapes[i].paletteId = paletteId;
+  sdf_set_box(i, x, y, z, w, h, d, hue, sat, val, alpha) {
+    if (typeof i === "object") return this.sdf_update_box(i);
+    this.shapes[i] = {
+      type: "box",
+      idx: clampIndex(i, Math.max(this.shapes.length || 1, clampIndex(i, 9999) + 1)),
+      x: Number(x) || 0,
+      y: Number(y) || 0,
+      z: Number(z) || 0,
+      w: Math.max(1, Number(w) || 1),
+      h: Math.max(1, Number(h) || 1),
+      d: Math.max(1, Number(d) || 1),
+      color: hsvToRgb(hue, sat, val),
+      alpha: Number(alpha) || 0.6,
+      bias: Number(arguments[10]) || 0.5,
+      power: Number(arguments[11]) || 2,
+      paletteId: null,
+      paletteMix: 255,
+      paletteScroll: 0,
+      paletteBright: 255,
+      paletteBlend: 1,
+      material: null
+    };
     return 0;
   }
 
-  sdf_set_material() {
+  create_Sphere() {
+    return { idx: this.shapes.length, type: "sphere", x: 0, y: 0, z: 0, r: 1, hue: 0, sat: 0, val: 0, alpha: 1, bias: 0.5 };
+  }
+
+  sdf_update_sphere(shape) {
+    return this.sdf_set_sphere(shape.idx, shape.x, shape.y, shape.z, shape.r, shape.hue, shape.sat, shape.val, shape.alpha, shape.bias);
+  }
+
+  create_Box() {
+    return { idx: this.shapes.length, type: "box", x: 0, y: 0, z: 0, w: 1, h: 1, d: 1, hue: 0, sat: 0, val: 0, alpha: 1, bias: 0.5, power: 2 };
+  }
+
+  sdf_update_box(shape) {
+    return this.sdf_set_box(shape.idx, shape.x, shape.y, shape.z, shape.w, shape.h, shape.d, shape.hue, shape.sat, shape.val, shape.alpha, shape.bias, shape.power);
+  }
+
+  sdf_set_shape(i, type, x, y, z, a, b, c, hue, sat, val, alpha, bias, power) {
+    return Number(type) === 1
+      ? this.sdf_set_box(i, x, y, z, a, b, c, hue, sat, val, alpha, bias, power)
+      : this.sdf_set_sphere(i, x, y, z, a, hue, sat, val, alpha, bias);
+  }
+
+  sdf_set_palette(i, paletteId, mix, scroll, bright, blend) {
+    if (this.shapes[i]) {
+      this.shapes[i].paletteId = paletteId;
+      this.shapes[i].paletteMix = Number(mix) || 0;
+      this.shapes[i].paletteScroll = Number(scroll) || 0;
+      this.shapes[i].paletteBright = typeof bright === "undefined" ? 255 : Number(bright) || 0;
+      this.shapes[i].paletteBlend = typeof blend === "undefined" ? 1 : Number(blend) || 0;
+    }
+    return 0;
+  }
+
+  sdf_set_material(i, texId, cellCm, strength, seed, mode) {
+    if (this.shapes[i]) {
+      this.shapes[i].material = {
+        texId: Number(texId) || 0,
+        cellCm: Math.max(0.001, Number(cellCm) || 1),
+        strength: Number(strength) || 0,
+        seed: Number(seed) || 0,
+        mode: Number(mode) || 0
+      };
+    }
     return 0;
   }
 
@@ -2550,6 +2776,7 @@ class WrenchPreviewRuntime {
   }
 
   sdf_set_tex_time() {
+    this.lastTexTimeMs = this.millis();
     return 0;
   }
 
@@ -2581,6 +2808,80 @@ class WrenchPreviewRuntime {
     if (which === 1) return p.y;
     if (which === 2) return p.z;
     return p.x;
+  }
+
+  tube_endpoints(tube, mode) {
+    const pair = PREVIEW_TUBE_ENDPOINTS[clampIndex(tube, 6)] || PREVIEW_TUBE_ENDPOINTS[0];
+    if (Number(mode) === 1) {
+      this.tempVecA.x = pair[0].x; this.tempVecA.y = pair[0].y; this.tempVecA.z = pair[0].z;
+      this.tempVecB.x = pair[1].x; this.tempVecB.y = pair[1].y; this.tempVecB.z = pair[1].z;
+      return { a: this.tempVecA, b: this.tempVecB };
+    }
+    return `${pair[0].x} ${pair[0].y} ${pair[0].z} ${pair[1].x} ${pair[1].y} ${pair[1].z}`;
+  }
+
+  tube_endpoints_out(tube, outA, outB) {
+    const pair = PREVIEW_TUBE_ENDPOINTS[clampIndex(tube, 6)] || PREVIEW_TUBE_ENDPOINTS[0];
+    if (!outA || !outB) return 0;
+    outA.x = pair[0].x; outA.y = pair[0].y; outA.z = pair[0].z;
+    outB.x = pair[1].x; outB.y = pair[1].y; outB.z = pair[1].z;
+    return 1;
+  }
+
+  tube_xyz(tube, t01, mode) {
+    const x = this.tube_lerp(tube, t01, 0);
+    const y = this.tube_lerp(tube, t01, 1);
+    const z = this.tube_lerp(tube, t01, 2);
+    if (Number(mode) === 1) {
+      this.tempVecC.x = x; this.tempVecC.y = y; this.tempVecC.z = z;
+      return this.tempVecC;
+    }
+    return `${x} ${y} ${z}`;
+  }
+
+  tube_xyz_out(tube, t01, outVec3) {
+    if (!outVec3) return 0;
+    outVec3.x = this.tube_lerp(tube, t01, 0);
+    outVec3.y = this.tube_lerp(tube, t01, 1);
+    outVec3.z = this.tube_lerp(tube, t01, 2);
+    return 1;
+  }
+
+  lerp3(a, b, t) {
+    const k = Math.max(0, Math.min(1, Number(t) || 0));
+    this.tempVecC.x = (a.x || 0) + ((b.x || 0) - (a.x || 0)) * k;
+    this.tempVecC.y = (a.y || 0) + ((b.y || 0) - (a.y || 0)) * k;
+    this.tempVecC.z = (a.z || 0) + ((b.z || 0) - (a.z || 0)) * k;
+    return this.tempVecC;
+  }
+
+  lerp_color(a, b, t) {
+    const k = Math.max(0, Math.min(1, Number(t) || 0));
+    return {
+      r: (a.r || 0) + ((b.r || 0) - (a.r || 0)) * k,
+      g: (a.g || 0) + ((b.g || 0) - (a.g || 0)) * k,
+      b: (a.b || 0) + ((b.b || 0) - (a.b || 0)) * k
+    };
+  }
+
+  time_now() {
+    return Math.floor(Date.now() / 1000);
+  }
+
+  time_local_seconds() {
+    const d = new Date();
+    return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
+  }
+
+  time_get() {
+    const d = new Date();
+    this.tempTime.epoch = Math.floor(d.getTime() / 1000);
+    this.tempTime.h = d.getHours();
+    this.tempTime.m = d.getMinutes();
+    this.tempTime.s = d.getSeconds();
+    this.tempTime.seconds = this.time_local_seconds();
+    this.tempTime.ymd = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+    return this.tempTime;
   }
 
   sdf_render() {
@@ -2617,11 +2918,21 @@ class WrenchPreviewRuntime {
     let accum = { r: 0, g: 0, b: 0 };
     for (const shape of this.shapes) {
       if (!shape) continue;
-      const dx = x - shape.x;
-      const dy = y - shape.y;
-      const dz = z - shape.z;
-      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      const falloff = Math.max(0, 1 - d / shape.r);
+      let falloff = 0;
+      if (shape.type === "sphere") {
+        const dx = x - shape.x;
+        const dy = y - shape.y;
+        const dz = z - shape.z;
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        falloff = Math.max(0, 1 - d / shape.r);
+      } else if (shape.type === "box") {
+        const dx = Math.max(0, Math.abs(x - shape.x) - shape.w * 0.5);
+        const dy = Math.max(0, Math.abs(y - shape.y) - shape.h * 0.5);
+        const dz = Math.max(0, Math.abs(z - shape.z) - shape.d * 0.5);
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        const edge = Math.max(4, Math.min(shape.w, shape.h, shape.d) * 0.45);
+        falloff = Math.max(0, 1 - d / edge);
+      }
       if (falloff <= 0) continue;
       const c = this.pickShapeColor(shape, falloff);
       const strength = falloff * Math.max(0.18, shape.alpha);
@@ -2639,8 +2950,20 @@ class WrenchPreviewRuntime {
   pickShapeColor(shape, falloff) {
     if (!shape.paletteId || !this.palettes[shape.paletteId]) return shape.color;
     const pal = this.palettes[shape.paletteId];
-    const idx = Math.max(0, Math.min(2, Math.floor(falloff * 2.99)));
-    return mixRgb(shape.color, pal[idx], 0.55);
+    const scroll = ((shape.paletteScroll || 0) + this.lastTexTimeMs * 0.001) * 0.01;
+    const idxF = ((1 - falloff) * 2 + scroll) % 3;
+    const idx0 = Math.max(0, Math.min(2, Math.floor((idxF + 3) % 3)));
+    const idx1 = (idx0 + 1) % 3;
+    const frac = ((idxF % 1) + 1) % 1;
+    const palColor = mixRgb(pal[idx0], pal[idx1], frac);
+    const mixAmt = Math.max(0, Math.min(1, (shape.paletteMix || 0) / 255));
+    const bright = Math.max(0, Math.min(1.4, (shape.paletteBright || 255) / 255));
+    const mixed = mixRgb(shape.color, palColor, mixAmt * (shape.paletteBlend || 1));
+    return {
+      r: Math.min(255, mixed.r * bright),
+      g: Math.min(255, mixed.g * bright),
+      b: Math.min(255, mixed.b * bright)
+    };
   }
 
   getTubeHexColors() {
