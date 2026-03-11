@@ -2085,10 +2085,11 @@ class WrenchPreview3D {
       g.clear();
       if (displayMode !== "preview" || !this.reflectionText) return;
 
+      const narrow = this.isNarrowScreen();
       const boxX = g.width * 0.06;
-      const boxY = g.height * 0.1;
-      const boxW = g.width * 0.34;
-      const boxH = g.height * 0.8;
+      const boxY = g.height * (narrow ? 0.08 : 0.1);
+      const boxW = g.width * (narrow ? 0.88 : 0.34);
+      const boxH = g.height * (narrow ? 0.84 : 0.8);
       const fittedSize = fitPreviewGraphicsTextSize(g, this.reflectionText, boxW, boxH);
 
       g.push();
@@ -2118,6 +2119,10 @@ class WrenchPreview3D {
     };
   }
 
+  isNarrowScreen() {
+    return typeof window !== "undefined" && window.innerWidth <= 900;
+  }
+
   resize() {
     if (!this.p) return;
     const { width, height } = this.getSize();
@@ -2133,6 +2138,7 @@ class WrenchPreview3D {
   }
 
   drawPyramid(p) {
+    const narrow = this.isNarrowScreen();
     const tubes = [
       { from: [ -95,  40, -55 ], to: [  95,  40, -55 ], colors: this.segmentColors[0] || [] },
       { from: [ -95,  40, -55 ], to: [   0, 110,  55 ], colors: this.segmentColors[3] || [] },
@@ -2143,7 +2149,7 @@ class WrenchPreview3D {
     ];
 
     p.push();
-    p.translate(displayMode === "preview" ? 125 : 48, 0, 0);
+    p.translate(displayMode === "preview" ? (narrow ? 0 : 125) : 48, 0, 0);
     for (const tube of tubes) {
       this.drawSegmentedCylinder(p, tube.from, tube.to, tube.colors);
     }
