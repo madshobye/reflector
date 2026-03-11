@@ -259,6 +259,7 @@ function styleLogPanel(el, bg) {
 function updateDomLayout() {
   resizeCanvas(sidebarEl.elt.clientWidth, windowHeight);
   if (aceEditor) aceEditor.resize();
+  if (previewController) previewController.resize();
 }
 
 function connectMQTT() {
@@ -1090,6 +1091,8 @@ class WrenchPreviewController {
     this.lastSource = "";
     this.error = "";
     this.loopStarted = false;
+    this.segmentColors = Array.from({ length: 6 }, () => Array.from({ length: 40 }, () => "#000000"));
+    this.preview3d = new WrenchPreview3D(hostDiv);
     this.startLoop();
   }
 
@@ -1147,11 +1150,142 @@ class WrenchPreviewController {
       this.renderError();
       return;
     }
-    this.hostDiv.html(renderPreviewSvg(this.runtime.getTubeSegmentHexColors()));
+    this.error = "";
+    this.segmentColors = this.runtime.getTubeSegmentHexColors();
+    this.preview3d.setState({ segmentColors: this.segmentColors, error: "" });
   }
 
   renderError() {
-    this.hostDiv.html(`<div class="preview-error">${escapeHtml(this.error || "Preview unavailable")}</div>`);
+    this.preview3d.setState({
+      segmentColors: this.segmentColors,
+      error: this.error || "Preview unavailable"
+    });
+  }
+
+  resize() {
+    if (this.preview3d) this.preview3d.resize();
+  }
+}
+
+class WrenchPreview3D {
+  constructor(hostDiv) {
+    this.hostDiv = hostDiv;
+    this.segmentColors = Array.from({ length: 6 }, () => Array.from({ length: 40 }, () => "#000000"));
+    this.error = "";
+    this.instance = new p5((p) => this.mountSketch(p), hostDiv.elt);
+  }
+
+  mountSketch(p) {
+    this.p = p;
+    p.setup = () => {
+      const { width, height } = this.getSize();
+      const c = p.createCanvas(width, height, p.WEBGL);
+      c.parent(this.hostDiv.elt);
+      p.setAttributes("antialias", true);
+    };
+
+    p.draw = () => {
+      p.background(0);
+      p.orbitControl(1.2, 1.2, 0.15);
+      p.noStroke();
+
+      p.push();
+      p.scale(1.55);
+      p.rotateX(-0.25);
+      this.drawPyramid(p);
+      p.pop();
+
+      if (this.error) {
+        this.drawErrorOverlay(p, this.error);
+      }
+    };
+
+    p.windowResized = () => this.resize();
+  }
+
+  getSize() {
+    const rect = this.hostDiv.elt.getBoundingClientRect();
+    return {
+      width: Math.max(80, Math.floor(rect.width || 320)),
+      height: Math.max(80, Math.floor(rect.height || 260))
+    };
+  }
+
+  resize() {
+    if (!this.p) return;
+    const { width, height } = this.getSize();
+    this.p.resizeCanvas(width, height);
+  }
+
+  setState({ segmentColors, error }) {
+    if (segmentColors) this.segmentColors = segmentColors;
+    this.error = error || "";
+  }
+
+  drawPyramid(p) {
+    const tubes = [
+      { from: [ -95,  40, -55 ], to: [  95,  40, -55 ], colors: this.segmentColors[0] || [] },
+      { from: [ -95,  40, -55 ], to: [   0, 110,  55 ], colors: this.segmentColors[3] || [] },
+      { from: [  95,  40, -55 ], to: [   0, 110,  55 ], colors: this.segmentColors[4] || [] },
+      { from: [  95,  40, -55 ], to: [   0, -70,  85 ], colors: this.segmentColors[1] || [] },
+      { from: [   0, -70,  85 ], to: [ -95,  40, -55 ], colors: this.segmentColors[2] || [] },
+      { from: [   0, -70,  85 ], to: [   0, 110,  55 ], colors: this.segmentColors[5] || [] }
+    ];
+
+    for (const tube of tubes) {
+      this.drawSegmentedCylinder(p, tube.from, tube.to, tube.colors);
+    }
+  }
+
+  drawSegmentedCylinder(p, from, to, colors) {
+    const segments = Math.max(1, colors.length || 40);
+    const radius = 6.5;
+    for (let i = 0; i < segments; i++) {
+      const t0 = i / segments;
+      const t1 = (i + 1) / segments;
+      const a = t0;
+      const b = t1;
+      const start = lerpVec3(from, to, a);
+      const end = lerpVec3(from, to, b);
+      this.drawCylinderBetween(p, start, end, colors[i] || "#202020", radius);
+    }
+  }
+
+  drawCylinderBetween(p, start, end, hexColor, radius) {
+    const dx = end[0] - start[0];
+    const dy = end[1] - start[1];
+    const dz = end[2] - start[2];
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (len <= 0.0001) return;
+
+    const midX = (start[0] + end[0]) * 0.5;
+    const midY = (start[1] + end[1]) * 0.5;
+    const midZ = (start[2] + end[2]) * 0.5;
+    const yaw = Math.atan2(dx, dz);
+    const pitch = Math.acos(Math.max(-1, Math.min(1, dy / len)));
+    const c = hexToRgb(hexColor);
+
+    p.push();
+    p.translate(midX, midY, midZ);
+    p.rotateY(yaw);
+    p.rotateX(pitch);
+    p.emissiveMaterial(c.r, c.g, c.b);
+    p.cylinder(radius, len, 10, 1, false, false);
+    p.pop();
+  }
+
+  drawErrorOverlay(p, message) {
+    p.push();
+    p.resetMatrix();
+    p.translate(-p.width / 2, -p.height / 2);
+    p.noStroke();
+    p.fill(0, 0, 0, 170);
+    p.rect(0, p.height - 42, p.width, 42);
+    p.fill(237, 174, 73);
+    p.textAlign(p.LEFT, p.CENTER);
+    p.textSize(12);
+    p.text(message, 12, p.height - 21);
+    p.pop();
   }
 }
 
@@ -1503,38 +1637,22 @@ function clampIndex(v, max) {
   return Math.max(0, Math.min(max - 1, Math.floor(Number(v) || 0)));
 }
 
-function renderPreviewSvg(segmentColors) {
-  const tubes = [
-    { x1: 75, y1: 195, x2: 245, y2: 195, colors: segmentColors[0] || [] },
-    { x1: 75, y1: 195, x2: 160, y2: 60, colors: segmentColors[3] || [] },
-    { x1: 245, y1: 195, x2: 160, y2: 60, colors: segmentColors[4] || [] },
-    { x1: 245, y1: 195, x2: 160, y2: 245, colors: segmentColors[1] || [] },
-    { x1: 160, y1: 245, x2: 75, y2: 195, colors: segmentColors[2] || [] },
-    { x1: 160, y1: 245, x2: 160, y2: 60, colors: segmentColors[5] || [] }
+function lerpVec3(a, b, t) {
+  return [
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+    a[2] + (b[2] - a[2]) * t
   ];
-  const lines = tubes.map((tube) => renderSegmentedTube(tube.x1, tube.y1, tube.x2, tube.y2, tube.colors)).join("");
-  return `
-    <svg viewBox="0 0 320 260" width="100%" height="100%" aria-label="Pyramid preview">
-      <rect x="0" y="0" width="320" height="260" fill="#000000" rx="10" />
-      ${lines}
-    </svg>
-  `;
 }
 
-function renderSegmentedTube(x1, y1, x2, y2, colors) {
-  const segments = Math.max(1, colors.length || 40);
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const gap = 0.06;
-  let out = "";
-  for (let i = 0; i < segments; i++) {
-    const t0 = i / segments;
-    const t1 = (i + 1) / segments;
-    const a = t0 + (t1 - t0) * gap;
-    const b = t1 - (t1 - t0) * gap;
-    out += `<line x1="${x1 + dx * a}" y1="${y1 + dy * a}" x2="${x1 + dx * b}" y2="${y1 + dy * b}" stroke="${colors[i] || "#222"}" stroke-width="18" stroke-linecap="round" />`;
-  }
-  return out;
+function hexToRgb(hex) {
+  const raw = String(hex || "#000000").replace("#", "").padStart(6, "0");
+  const value = parseInt(raw.slice(0, 6), 16);
+  return {
+    r: (value >> 16) & 255,
+    g: (value >> 8) & 255,
+    b: value & 255
+  };
 }
 
 function escapeHtml(s) {
