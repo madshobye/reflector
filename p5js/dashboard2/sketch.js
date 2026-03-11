@@ -16,6 +16,7 @@ const ORBIT_STORAGE_VERSION = "v2";
 const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
+const CONSOLE_MAX_LINES = 1000;
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -29,6 +30,7 @@ let automationTimerId = null;
 let automationIntervalMinutes = 15;
 let remoteAutomationStopped = false;
 let automationWasRunningBeforeRemoteStop = false;
+let debugDownloadsEnabled = false;
 let generationInProgress = false;
 let lastPromptText = "";
 let lastDescription = "";
@@ -172,6 +174,7 @@ function createSidebarControls() {
     ["runStore", "Run + Store", () => cmdRunAndStore()],
     ["reboot", "Reboot", () => cmdReboot()],
     ["generate", "Generate Wrench", () => generateWrenchAndRun()],
+    ["debugDownloads", "Debug: OFF", () => toggleDebugDownloads()],
     ["autoFix", "Auto-fix: OFF", () => {
       autoFixEnabled = !autoFixEnabled;
       logLine("Auto-fix is now " + (autoFixEnabled ? "ON" : "OFF"));
@@ -286,6 +289,7 @@ function syncSidebarControls() {
   updateSidebarButton("runStore", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "mid" : "off" });
   updateSidebarButton("reboot", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "low" : "off" });
   updateSidebarButton("generate", { disabled: !isConnected || generationInProgress || !isAuthenticated, tone: isConnected && !generationInProgress && isAuthenticated ? "mid" : "off" });
+  updateSidebarButton("debugDownloads", { label: debugDownloadsEnabled ? "Debug: ON" : "Debug: OFF", disabled: false, tone: debugDownloadsEnabled ? "high" : "low" });
   updateSidebarButton("autoFix", { label: autoFixEnabled ? "Auto-fix: ON" : "Auto-fix: OFF", disabled: !isAuthenticated, tone: autoFixEnabled && isAuthenticated ? "high" : "off" });
   updateSidebarButton("automationInterval", { label: automationIntervalLabel(), disabled: !isAuthenticated, tone: automationIntervalMinutes === 0 && isAuthenticated ? "high" : (isAuthenticated ? "low" : "off") });
   updateSidebarButton("automation", {
@@ -360,6 +364,7 @@ function setPrivilegedControlsVisible(visible) {
     "runStore",
     "reboot",
     "generate",
+    "debugDownloads",
     "autoFix",
     "automationInterval",
     "automation",
@@ -524,6 +529,10 @@ function mqttDashboardSyncTopic(pyrId = selectedPyrId) {
   return `/glow_dk_cph/${pyrId}/dashboard_sync`;
 }
 
+function mqttConsoleTopic(pyrId = selectedPyrId) {
+  return `/glow_dk_cph/${pyrId}/dashboard_console`;
+}
+
 function reflectionViewUrl(pyrId = selectedPyrId) {
   return `../reflection/?id=${encodeURIComponent(pyrId)}`;
 }
@@ -545,6 +554,10 @@ function subscribeReflectorTopics(pyrId = selectedPyrId) {
     if (err) logLine("Subscribe error: " + err);
     else logLine("Subscribed: " + mqttDashboardSyncTopic(pyrId));
   });
+  client.subscribe(mqttConsoleTopic(pyrId), (err) => {
+    if (err) logLine("Subscribe error: " + err);
+    else logLine("Subscribed: " + mqttConsoleTopic(pyrId));
+  });
 }
 
 function unsubscribeReflectorTopics(pyrId) {
@@ -553,6 +566,7 @@ function unsubscribeReflectorTopics(pyrId) {
   client.unsubscribe(mqttReflectionTopic(pyrId));
   client.unsubscribe(mqttCodeStateTopic(pyrId));
   client.unsubscribe(mqttDashboardSyncTopic(pyrId));
+  client.unsubscribe(mqttConsoleTopic(pyrId));
 }
 
 function resubscribeReflectorTopics(prevId, nextId) {
@@ -895,7 +909,12 @@ function connectMQTT() {
       applyDashboardSyncMessage(s);
       return;
     }
+    if (topic === mqttConsoleTopic()) {
+      applyRemoteConsoleMessage(s);
+      return;
+    }
     if (topic !== mqttEvtTopic()) return;
+    maybeDownloadPyramidError(s);
     if (!logSummarizedEvtMessage(topic, s)) {
       logLine(topic + ": " + s);
     }
@@ -1014,6 +1033,96 @@ function publishDashboardSync(eventType, data = {}) {
     ...data
   });
   client.publish(mqttDashboardSyncTopic(), payload);
+}
+
+function publishConsoleLine(line) {
+  if (!client || !isConnected || !automationEnabled) return;
+  try {
+    client.publish(mqttConsoleTopic(), JSON.stringify({
+      dashboard_id: dashboardInstanceId,
+      line: String(line ?? ""),
+      sent_at: new Date().toISOString()
+    }));
+  } catch (_) {}
+}
+
+function toggleDebugDownloads() {
+  debugDownloadsEnabled = !debugDownloadsEnabled;
+  logLine("Debug downloads " + (debugDownloadsEnabled ? "enabled." : "disabled."));
+  syncSidebarControls();
+}
+
+function downloadBrowserFile(filename, content, mimeType = "text/plain;charset=utf-8") {
+  const blob = new Blob([String(content ?? "")], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function debugTimestampSlug() {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function maybeDownloadParsedPrompt(md) {
+  if (!debugDownloadsEnabled) return;
+  downloadBrowserFile(
+    `${selectedPyrId}-prompt-${debugTimestampSlug()}.md`,
+    md,
+    "text/markdown;charset=utf-8"
+  );
+}
+
+function maybeDownloadStructuredResponse(kind, payload) {
+  if (!debugDownloadsEnabled) return;
+  downloadBrowserFile(
+    `${selectedPyrId}-${kind}-${debugTimestampSlug()}.json`,
+    JSON.stringify(payload, null, 2),
+    "application/json;charset=utf-8"
+  );
+}
+
+function maybeDownloadPyramidError(msg) {
+  if (!debugDownloadsEnabled || !msg || msg[0] !== "{") return;
+  try {
+    const obj = JSON.parse(msg);
+    if (!(obj && obj.ok === false)) return;
+    downloadBrowserFile(
+      `${selectedPyrId}-error-${debugTimestampSlug()}.json`,
+      JSON.stringify({
+        reflector_id: selectedPyrId,
+        received_at: new Date().toISOString(),
+        error: obj,
+        last_code: getEditorValue()
+      }, null, 2),
+      "application/json;charset=utf-8"
+    );
+  } catch (_) {}
+}
+
+function applyRemoteConsoleMessage(msg) {
+  if (!msg) return;
+  try {
+    const obj = JSON.parse(msg);
+    if (!obj || obj.dashboard_id === dashboardInstanceId) return;
+    if (typeof obj.line !== "string" || !obj.line) return;
+    appendConsoleLine("[remote] " + obj.line, false);
+  } catch (_) {}
+}
+
+function maybeRotateConsole(lines) {
+  if (lines.length <= CONSOLE_MAX_LINES) return lines;
+  const dumped = lines.join("\n");
+  downloadBrowserFile(
+    `${selectedPyrId}-console-${debugTimestampSlug()}.txt`,
+    dumped,
+    "text/plain;charset=utf-8"
+  );
+  return [];
 }
 
 function applyReflectionMessage(msg) {
@@ -1175,6 +1284,7 @@ async function generateWrenchAndRun() {
 
   try {
     const md = await fetchDocMarkdown();
+    maybeDownloadParsedPrompt(md);
     logLine("Doc fetched: " + md.length + " chars");
     logLine("GPT model: " + selectedGptModel);
     logLine("Calling OpenAI...");
@@ -1431,6 +1541,7 @@ async function openaiGenerateWrenchFromDoc(docMd) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error("OpenAI error: " + (data?.error?.message || res.status));
+  maybeDownloadStructuredResponse("structured-response", data);
   const argsStr = data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
   if (!argsStr) throw new Error("No tool call arguments returned.");
   return JSON.parse(argsStr);
@@ -1553,19 +1664,27 @@ async function openaiFixWrenchFromError(brokenCode, errText) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error("OpenAI error: " + (data?.error?.message || res.status));
+  maybeDownloadStructuredResponse("structured-fix", data);
   const argsStr = data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
   if (!argsStr) throw new Error("No tool call arguments returned from fix_wrench.");
   return JSON.parse(argsStr);
 }
 
-function logLine(s) {
+function appendConsoleLine(s, shouldBroadcast = true) {
   const consumedByMetrics = maybeUpdateMetricsFromConsoleLine(s);
   if (consumedByMetrics) return;
 
   const prev = consoleDiv.html();
-  const next = prev + (prev ? "\n" : "") + s;
-  consoleDiv.html(next);
+  let lines = prev ? prev.split("\n") : [];
+  lines.push(String(s));
+  lines = maybeRotateConsole(lines);
+  consoleDiv.html(lines.join("\n"));
   consoleDiv.elt.scrollTop = consoleDiv.elt.scrollHeight;
+  if (shouldBroadcast) publishConsoleLine(s);
+}
+
+function logLine(s) {
+  appendConsoleLine(s, true);
 }
 
 function defaultWrenchExample() {
