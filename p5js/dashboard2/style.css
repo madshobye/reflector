@@ -57,6 +57,7 @@ body.preview-mode {
 }
 
 .sidebar-button,
+.sidebar-select,
 .sidebar-status,
 .sidebar-meta {
   width: 100%;
@@ -78,6 +79,19 @@ body.preview-mode {
   transition: background-color 120ms ease, color 120ms ease;
 }
 
+.sidebar-select {
+  appearance: none;
+  -webkit-appearance: none;
+  color: #f5f1e8;
+  background: #2f2f2f;
+  cursor: pointer;
+  outline: none;
+}
+
+.sidebar-select.tone-mid { background: #3a3a3a; }
+.sidebar-select.tone-low { background: #2f2f2f; }
+.sidebar-select.tone-off { background: #202020; color: #8d8d8d; }
+
 .sidebar-button.tone-high { background: #4a4a4a; }
 .sidebar-button.tone-mid { background: #3a3a3a; }
 .sidebar-button.tone-low { background: #2f2f2f; }
@@ -85,6 +99,7 @@ body.preview-mode {
 
 .sidebar-button:hover:not(:disabled) { background: #555555; }
 .sidebar-button:active:not(:disabled) { background: #262626; }
+.sidebar-select:hover { background: #555555; }
 .sidebar-button:disabled {
   cursor: default;
   opacity: 1;

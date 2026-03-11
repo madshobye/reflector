@@ -1,6 +1,17 @@
 window.showOverlay = false;
 
-const AUTOMATION_INTERVAL_MS = 3 * 60 * 1000;
+const AUTOMATION_INTERVAL_OPTIONS_MINUTES = [0, 5, 15, 30, 60, 120, 240, 360, 600];
+const AUTOMATION_INTERVAL_KEY = "dashboard2_automation_interval_minutes";
+const GPT_MODEL_KEY = "dashboard2_gpt_model";
+const GPT_MODEL_OPTIONS = [
+  "gpt-5.1-codex",
+  "gpt-5.2-codex",
+  "gpt-5.1",
+  "gpt-5.2",
+  "gpt-5.1-mini",
+  "gpt-5-codex"
+];
+const DEFAULT_GPT_MODEL = "gpt-5.1-codex";
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -16,11 +27,13 @@ let autoFixEnabled = false;
 let autoFixInProgress = false;
 let automationEnabled = false;
 let automationTimerId = null;
+let automationIntervalMinutes = 15;
 let generationInProgress = false;
 let lastPromptText = "";
 let lastDescription = "";
 let lastCompileErrText = "";
 let lastCompileErrMs = 0;
+let selectedGptModel = DEFAULT_GPT_MODEL;
 
 let OPENAI_API_KEY = "";
 let mqttKey = "";
@@ -66,12 +79,15 @@ let modeToggleButton = null;
 let reflectionMeasureCanvas = null;
 let sidebarStatusDiv = null;
 let sidebarIntervalDiv = null;
+let sidebarModelSelect = null;
 let sidebarButtons = {};
 let sidebarSyncTimer = null;
 
 async function setup() {
   noCanvas();
   displayMode = loadDisplayMode();
+  automationIntervalMinutes = loadAutomationIntervalMinutes();
+  selectedGptModel = loadSelectedGptModel();
   createLayout();
 
   try {
@@ -156,6 +172,7 @@ function createSidebarControls() {
       logLine("Auto-fix is now " + (autoFixEnabled ? "ON" : "OFF"));
       syncSidebarControls();
     }],
+    ["automationInterval", automationIntervalLabel(), () => cycleAutomationInterval()],
     ["automation", "Automation: OFF", () => toggleAutomation()],
     ["insertExample", "Insert Example", () => {
       setEditorValue(defaultWrenchExample());
@@ -173,6 +190,20 @@ function createSidebarControls() {
     btn.mousePressed(handler);
     sidebarButtons[key] = btn;
   }
+
+  sidebarModelSelect = createSelect();
+  sidebarModelSelect.parent(wrap);
+  sidebarModelSelect.class("sidebar-select");
+  for (const model of GPT_MODEL_OPTIONS) {
+    sidebarModelSelect.option(model, model);
+  }
+  sidebarModelSelect.selected(selectedGptModel);
+  sidebarModelSelect.changed(() => {
+    selectedGptModel = sidebarModelSelect.value();
+    persistSelectedGptModel();
+    logLine("GPT model: " + selectedGptModel);
+    syncSidebarControls();
+  });
 
   sidebarStatusDiv = createDiv("");
   sidebarStatusDiv.parent(wrap);
@@ -202,12 +233,21 @@ function syncSidebarControls() {
   updateSidebarButton("reboot", { disabled: !isConnected, tone: isConnected ? "low" : "off" });
   updateSidebarButton("generate", { disabled: !isConnected || generationInProgress, tone: isConnected && !generationInProgress ? "mid" : "off" });
   updateSidebarButton("autoFix", { label: autoFixEnabled ? "Auto-fix: ON" : "Auto-fix: OFF", disabled: false, tone: autoFixEnabled ? "high" : "off" });
+  updateSidebarButton("automationInterval", { label: automationIntervalLabel(), disabled: false, tone: automationIntervalMinutes === 0 ? "high" : "low" });
   updateSidebarButton("automation", { label: automationEnabled ? "Automation: ON" : "Automation: OFF", disabled: !isConnected || generationInProgress, tone: automationEnabled ? "high" : (!isConnected || generationInProgress ? "off" : "off") });
   updateSidebarButton("insertExample", { disabled: false, tone: "low" });
   updateSidebarButton("clearConsole", { disabled: false, tone: "low" });
+  if (sidebarModelSelect) {
+    sidebarModelSelect.value(selectedGptModel);
+    sidebarModelSelect.removeClass("tone-high");
+    sidebarModelSelect.removeClass("tone-mid");
+    sidebarModelSelect.removeClass("tone-low");
+    sidebarModelSelect.removeClass("tone-off");
+    sidebarModelSelect.addClass(isConnected ? "tone-mid" : "tone-low");
+  }
 
   if (sidebarIntervalDiv) {
-    sidebarIntervalDiv.html("Automation interval: " + Math.round(AUTOMATION_INTERVAL_MS / 1000) + "s");
+    sidebarIntervalDiv.html("Model: " + selectedGptModel);
   }
 }
 
@@ -222,6 +262,58 @@ function updateSidebarButton(key, { label, disabled, tone }) {
   btn.removeClass("tone-low");
   btn.removeClass("tone-off");
   btn.addClass(`tone-${tone || "mid"}`);
+}
+
+function automationIntervalLabel() {
+  if (automationIntervalMinutes >= 60) {
+    const hours = automationIntervalMinutes / 60;
+    return "Refresh: " + (Number.isInteger(hours) ? hours : hours.toFixed(1)) + "h";
+  }
+  return "Refresh: " + automationIntervalMinutes + "m";
+}
+
+function loadAutomationIntervalMinutes() {
+  try {
+    const raw = Number(window.localStorage.getItem(AUTOMATION_INTERVAL_KEY));
+    if (AUTOMATION_INTERVAL_OPTIONS_MINUTES.includes(raw)) return raw;
+  } catch (_) {}
+  return 15;
+}
+
+function persistAutomationIntervalMinutes() {
+  try {
+    window.localStorage.setItem(AUTOMATION_INTERVAL_KEY, String(automationIntervalMinutes));
+  } catch (_) {}
+}
+
+function cycleAutomationInterval() {
+  const idx = AUTOMATION_INTERVAL_OPTIONS_MINUTES.indexOf(automationIntervalMinutes);
+  const nextIdx = idx >= 0 ? (idx + 1) % AUTOMATION_INTERVAL_OPTIONS_MINUTES.length : 0;
+  automationIntervalMinutes = AUTOMATION_INTERVAL_OPTIONS_MINUTES[nextIdx];
+  persistAutomationIntervalMinutes();
+  logLine(
+    automationIntervalMinutes === 0
+      ? "Automation refresh set to 0 minutes (rerun immediately)."
+      : "Automation refresh set to " + automationIntervalMinutes + " minutes."
+  );
+  if (automationEnabled) {
+    scheduleNextAutomationRun();
+  }
+  syncSidebarControls();
+}
+
+function loadSelectedGptModel() {
+  try {
+    const saved = window.localStorage.getItem(GPT_MODEL_KEY);
+    if (saved && GPT_MODEL_OPTIONS.includes(saved)) return saved;
+  } catch (_) {}
+  return DEFAULT_GPT_MODEL;
+}
+
+function persistSelectedGptModel() {
+  try {
+    window.localStorage.setItem(GPT_MODEL_KEY, selectedGptModel);
+  } catch (_) {}
 }
 
 function styleLogPanel(el, bg) {
@@ -587,6 +679,7 @@ function clearAutomationTimer() {
 function scheduleNextAutomationRun() {
   clearAutomationTimer();
   if (!automationEnabled) return;
+  const automationIntervalMs = automationIntervalMinutes * 60 * 1000;
 
   automationTimerId = setTimeout(() => {
     automationTimerId = null;
@@ -597,7 +690,7 @@ function scheduleNextAutomationRun() {
       return;
     }
     generateWrenchAndRun();
-  }, AUTOMATION_INTERVAL_MS);
+  }, automationIntervalMs);
 }
 
 function publishJsonLine(obj) {
@@ -716,6 +809,7 @@ async function generateWrenchAndRun() {
   try {
     const md = await fetchDocMarkdown();
     logLine("Doc fetched: " + md.length + " chars");
+    logLine("GPT model: " + selectedGptModel);
     logLine("Calling OpenAI...");
     const out = await openaiGenerateWrenchFromDoc(md);
     if (!out || !out.wrench_code) throw new Error("No wrench_code returned.");
@@ -916,7 +1010,7 @@ async function openaiGenerateWrenchFromDoc(docMd) {
   ];
 
   const body = {
-    model: "gpt-5.2",
+    model: selectedGptModel,
     messages: [
       {
         role: "system",
@@ -1041,7 +1135,7 @@ async function openaiFixWrenchFromError(brokenCode, errText) {
   ];
 
   const body = {
-    model: "gpt-5.2",
+    model: selectedGptModel,
     messages: [
       {
         role: "system",
