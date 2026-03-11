@@ -18,7 +18,8 @@ const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", 
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
 const DASHBOARD2_VERSION = "v32";
-const NEWS_ITEMS_PER_FEED = 20;
+const TOTAL_NEWS_ITEMS = 10;
+const RSS_CACHE_TTL_MS = 20 * 60 * 1000;
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -1719,11 +1720,13 @@ async function injectNewsIntoMarkdown(md) {
 
   const sections = [];
   let successCount = 0;
+  let remainingItems = TOTAL_NEWS_ITEMS;
   for (const feedUrl of feeds) {
+    if (remainingItems <= 0) break;
     logLine("News debug: fetching " + feedUrl);
     try {
       const feedXml = await fetchFeedText(feedUrl);
-      const items = parseRssItems(feedXml, NEWS_ITEMS_PER_FEED);
+      const items = parseRssItems(feedXml, remainingItems);
       if (!items.length) continue;
       logLine("News debug [" + feedUrl + "]: " + items[0].title + " | " + items[0].description);
       const lines = ["## " + feedUrl];
@@ -1732,6 +1735,7 @@ async function injectNewsIntoMarkdown(md) {
       }
       sections.push(lines.join("\n\n"));
       successCount++;
+      remainingItems -= items.length;
     } catch (err) {
       if (err && err.feedXml) {
         maybeDownloadRssFailure(feedUrl, "parse", err.feedXml, err);
@@ -1779,6 +1783,12 @@ function extractUrlFromMarkdownLine(line) {
 }
 
 async function fetchFeedText(url) {
+  const cached = getCachedFeedText(url);
+  if (cached) {
+    logLine("News debug: cache hit " + url);
+    return cached;
+  }
+
   const attempts = [
     {
       label: "allorigins-get",
@@ -1807,12 +1817,42 @@ async function fetchFeedText(url) {
       if (!res.ok) throw new Error("HTTP " + res.status);
       const text = await attempt.parse(res);
       if (!text) throw new Error("Empty response");
+      setCachedFeedText(url, text);
       return text;
     } catch (err) {
       lastErr = err;
     }
   }
   throw lastErr || new Error("Feed fetch failed");
+}
+
+function feedCacheKey(url) {
+  return "dashboard2_rss_cache_" + String(url || "");
+}
+
+function getCachedFeedText(url) {
+  try {
+    const raw = window.localStorage.getItem(feedCacheKey(url));
+    if (!raw) return "";
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.text !== "string" || typeof parsed.cached_at !== "number") return "";
+    if (Date.now() - parsed.cached_at > RSS_CACHE_TTL_MS) return "";
+    return parsed.text;
+  } catch (_) {
+    return "";
+  }
+}
+
+function setCachedFeedText(url, text) {
+  try {
+    window.localStorage.setItem(
+      feedCacheKey(url),
+      JSON.stringify({
+        cached_at: Date.now(),
+        text: String(text || "")
+      })
+    );
+  } catch (_) {}
 }
 
 function parseRssItems(xmlText, maxItems) {
