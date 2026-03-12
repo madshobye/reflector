@@ -180,11 +180,11 @@ body.preview-mode {
 }
 
 .panel-section.editor {
-  flex: 1 1 58%;
+  flex: 1 1 66%;
 }
 
 .panel-section.console {
-  flex: 1 1 42%;
+  flex: 1 1 34%;
 }
 
 .panel-section.third {

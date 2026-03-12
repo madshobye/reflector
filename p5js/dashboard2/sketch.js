@@ -19,7 +19,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v48";
+const DASHBOARD2_VERSION = "v49";
 const TOTAL_NEWS_ITEMS = 20;
 const RSS_CACHE_TTL_MS = 20 * 60 * 1000;
 const DOC_MD_URL =
@@ -172,6 +172,9 @@ function createDomPanels() {
   descriptionDiv.parent(reflectionSectionEl);
   descriptionDiv.class("panel-box");
   styleLogPanel(descriptionDiv, "#000000");
+  descriptionDiv.style("font-size", "17px");
+  descriptionDiv.style("line-height", "1.55");
+  descriptionDiv.style("font-family", "\"IBM Plex Sans\", sans-serif");
 
   metricsDiv = createDiv("");
   metricsDiv.parent(metricsSectionEl);
@@ -2689,11 +2692,11 @@ function createLayout() {
   infoColumnEl.class("content-column");
   infoColumnEl.parent(contentEl);
 
-  editorSectionEl = createSection(editorColumnEl, "editor", "Wrench Code");
-  consoleSectionEl = createSection(editorColumnEl, "console", "Console");
-  reflectionSectionEl = createSection(infoColumnEl, "third", "Reflection");
+  emptySectionEl = createSection(editorColumnEl, "editor", "Preview");
+  reflectionSectionEl = createSection(editorColumnEl, "console", "Reflection");
   metricsSectionEl = createSection(infoColumnEl, "third", "Device Info");
-  emptySectionEl = createSection(infoColumnEl, "third", "Preview");
+  editorSectionEl = createSection(infoColumnEl, "third", "Wrench Code");
+  consoleSectionEl = createSection(infoColumnEl, "third", "Console");
   consoleSectionEl.addClass("console-section");
   reflectionSectionEl.addClass("reflection-section");
   metricsSectionEl.addClass("device-info");
