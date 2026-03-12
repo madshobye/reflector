@@ -4,7 +4,7 @@ This document collects the primary information an LLM needs to generate Wrench c
 
 ## 1) System Summary
 - MCU: ESP32‑S3
-- LED output: Adafruit NeoPXL8 (8‑lane driver), using 6 lanes/strips
+- LED output: Adafruit NeoPXL8 (8‑lane driver), using **6 output lanes**
 - Render model: 2‑buffer; Wrench renders into `g_renderBuf` (Core 1), Core 0 copies to front buffer and pushes to NeoPXL8
 - Wrench runs on Core 1, LED push task runs on Core 0
 
@@ -14,22 +14,47 @@ This document collects the primary information an LLM needs to generate Wrench c
 - Base edges: tubes **0,1,2**
 - Apex edges: tubes **3,4,5** (from base corners to apex)
 
+### Edge ordering (important for choreography)
+Use this edge mapping consistently when reasoning about motion, symmetry, and clockwise / counterclockwise travel:
+- Tube `0` = base edge **A → B**
+- Tube `1` = base edge **B → C**
+- Tube `2` = base edge **C → A**
+- Tube `3` = apex edge **A → D**
+- Tube `4` = apex edge **B → D**
+- Tube `5` = apex edge **C → D**
+
+Where:
+- `A = (-95.0, -38.784, -54.848)`
+- `B = (95.0, -38.784, -54.848)`
+- `C = (0.0, -38.784, 109.697)`
+- `D = apex = (0.0, 116.351, 0.0)`
+
+For base-triangle motion, `0 → 1 → 2` follows the triangle cycle `A→B→C→A`. If you want clockwise or counterclockwise movement, reason from these vertex connections rather than from a camera view or screen layout.
+
 ## 3) LED Topology
-- `NUM_STRIPS = 6` (tubes)
-- Each tube has **4 strips/sections** (square tube, 360-degree output)
+- `NUM_STRIPS = 6` (**tubes**, one addressable hardware lane per tube)
+- Each tube contains **4 physical sections/faces** (square tube, 360-degree output)
 - `NUMSECTIONS_PR_TUBE = 4`
-- Each tube is addressed as a **strip index** (`0..5`)
-- LEDs are contiguous per tube: `strip * STRIP_LEN + idx`
+- Each tube is addressed by a **tube index** (`0..5`)
+- LEDs are contiguous per tube: `tubeIndex * (STRIP_LEN * STRIPS_PER_TUBE) + localTubePixel`
 - Per-tube pixel count: **892** (4 strips × 223 pixels)
 - Physical routing: zig-zag / snake pattern along the tube
 
+### Terminology used in this document
+- **tube** = one of the 6 tetrahedron edges; this is the main spatial unit for programming
+- **section** = one of the 4 physical LED runs around a square tube
+- **hardware lane** = one NeoPXL8 output driving one full tube
+- **strip** in firmware constants usually means a hardware lane / tube, while `STRIP_LEN` means one section length
+
+When writing Wrench, think primarily in **tube indices** (`0..5`) and only drop down to absolute LED indices when needed.
+
 ### Wrench constants
 These are injected into Wrench automatically:
-- `STRIPS` = number of strips/tubes (`6`)
+- `STRIPS` = number of hardware lanes / tubes (`6`)
 - `TUBES` = same as `STRIPS`
 - `STRIPS_PER_TUBE` = `4`
 - `SDF_STRIP_BITS` = `STRIPS * STRIPS_PER_TUBE`
-- `STRIP_LEN` = LEDs per strip
+- `STRIP_LEN` = LEDs per physical section (`223`)
 - `TOTAL_LEDS` = total LEDs
 - `SDF_SPHERE = 0`, `SDF_BOX = 1`
 - `SDF_UNITS = "cm"`
@@ -53,6 +78,13 @@ These are injected into Wrench automatically:
 
 Within each tube, pixel `0` is one physical end and pixel `891` is the other end (usually “bottom → top”).
 
+### Practical indexing reminder
+- `STRIP_LEN` is **per physical section**, not per whole tube
+- One full tube contains `STRIP_LEN * STRIPS_PER_TUBE = 223 * 4 = 892` pixels
+- Absolute pixel writes should therefore use:
+  - `tubeIndex * (STRIP_LEN * STRIPS_PER_TUBE) + localTubePixel`
+  - not `tubeIndex * STRIP_LEN + ...`
+
 ### Tube endpoints API
 - `tube_endpoints(tubeIndex)` → string: `"ax ay az bx by bz"`
 - `tube_endpoints(tubeIndex, 1)` → `{ a: Vec3, b: Vec3 }` (container, reused)
@@ -63,6 +95,18 @@ Within each tube, pixel `0` is one physical end and pixel `891` is the other end
 - `tube_xyz3(tubeIndex, t01)` → `Vec3` (container, reused)
 - `tube_xyz_out(tubeIndex, t01, outVec3)` → writes into `outVec3`, returns 1/0 (no allocations)
 - `tube_endpoints_out(tubeIndex, outA, outB)` → writes into `outA/outB`, returns 1/0 (no allocations)
+
+### Container lifetime warning
+The following return **reused containers** and should not be stored across frames:
+- `tube_xyz3(...)`
+- `tube_endpoints3(...)`
+- `lerp3(...)`
+- `lerp_color(...)`
+
+If you need persistence across frames or loops, use:
+- `tube_xyz_out(...)`
+- `tube_endpoints_out(...)`
+- your own `Vec3` / `Color` containers
 
 ### Reference coordinates (current firmware geometry)
 These are derived from the current constants in `ledPositions.ino` (`PYRAMID_EDGE_CM=190`, `TUBE_LEN_CM=155.5`, `EDGE_PAD=17.25`), centered at origin. If geometry changes, recompute via `tube_endpoints3()`.
@@ -113,6 +157,15 @@ Wrench is not full JavaScript. Key constraints:
 - Avoid heavy math in tight loops
 - No multiple `var` declarations on the same line; use one per line
 - Keep lines < ~200 chars
+
+### Authoritative API rule
+Only use the bindings documented in this file (and the examples that directly follow from them). Do **not** invent convenience helpers that are common in other LED environments.
+
+Examples of functions that should **not** be assumed unless explicitly documented for this firmware:
+- `leds_fade_to_black(...)`
+- `leds_add_solid(...)`
+- undocumented FastLED helpers
+- undocumented simulator-only helpers
 
 ### Structs and dot access
 Wrench supports `struct` and `new` with dot access for members:
@@ -165,6 +218,18 @@ function tick() {
 }
 ```
 
+### Generation guidance
+- Prefer documented scalar APIs in hot paths:
+  - `sdf_set_sphere(i, x,y,z, r, h,s,v, alpha, bias)`
+  - `sdf_set_box(i, x,y,z, w,h,d, h,s,v, alpha, bias, power)`
+  - `leds_set_pixel(pos, r,g,b)`
+- Use `tube_lerp(...)` / `tube_xyz_out(...)` when anchoring motion to tube geometry.
+- Use the explicit edge mapping from Section 2 when referring to “clockwise”, “counterclockwise”, “left”, or “right”; do not rely on camera orientation or a mirrored preview.
+- Keep scenes inside the safe volume unless there is a strong reason not to.
+- Prefer SDF-driven scenes over heavy per-pixel loops.
+- If using `sdf_set_palette(...)`, always define that palette first with `sdf_palette_*`.
+- If using `sdf_palette_hsv3(...)`, provide the full argument list.
+
 ### Vector lerp helper
 ```js
 var a = tube_xyz3(0, 0.0);
@@ -190,8 +255,8 @@ On every new Wrench program load, the firmware clears the SDF shape list and ren
 ## 6) LED API (Wrench)
 - `leds_begin()` → 1/0
 - `leds_total()` → total LEDs
-- `leds_strip_count()` → number of strips (tubes)
-- `leds_strip_len()` → LEDs per strip
+- `leds_strip_count()` → number of tubes / hardware lanes
+- `leds_strip_len()` → LEDs per physical section (`223`)
 - `leds_clear()`
 - `leds_set_brightness(b)`
 - `leds_get_brightness()`
@@ -201,6 +266,8 @@ On every new Wrench program load, the firmware clears the SDF shape list and ren
 - `create_Color()` → Color container (`r,g,b`)
 - `leds_get_pixel_c(pos)` → Color container (`r,g,b`)
 - `leds_show()` (optional manual push; frames are auto‑submitted after each `tick()`)
+
+Do not assume additional LED helpers exist beyond the list above.
 
 ## 7) SDF API (Wrench)
 SDF rendering draws into the render buffer. This is the primary way to create volumetric effects.
@@ -321,6 +388,24 @@ hash::exists(h, key)
 - Prefer incremental updates over clearing every frame
 - Avoid heavy per‑pixel loops when SDF can do the work
 - Minimize heap allocations in Wrench (especially in `tick()`)
+
+## 13.2) Design Strategy Ideas
+When generating concepts for this sculpture, these approaches tend to work well:
+- **Whole-volume atmosphere**: fill the tetrahedron with a few large SDF shapes so the whole object reads as one field or mood.
+- **Edge-anchored structure**: use tube midpoints, base edges, or apex edges so the tetrahedral form stays legible.
+- **Base-to-apex narrative**: let forms rise from the base triangle toward the apex to express emergence, escalation, warning, prayer, or pressure.
+- **Apex icon**: place a symbolic focal form near the apex (eye, beacon, siren, halo, scanner, crown, flame).
+- **Base pressure zone**: keep haze or density near the base center or along the base triangle to suggest burden, crowding, sediment, oil, fog, or memory.
+- **Flag / tricolor mode**: turn the whole sculpture into a symbolic color field using strong vertical or horizontal divisions.
+- **Warning-sign language**: use scan bars, hazard slices, alert pulses, red/amber intrusions, or harsh textures.
+- **Weather / material motion**: snow, ash, smoke, sparks, rain, fog, dripping oil, rising steam.
+- **Swarm / orbit**: many spheres drifting with simplex noise around the volume or along tubes.
+- **Architectural reading**: columns, slabs, towers, cathedral/spire logic, brutalist blocks, monument silhouettes.
+- **Order vs noise**: combine precise boxes/planes with drifting organic spheres to create tension between system and chaos.
+- **Palette as meaning**: let custom palettes carry the concept (oil-black to gold, toxic green to cyan, siren red to amber, blue to pearl).
+- **Texture as meaning**: crosshatch, moire, checker, rings, diagonal stripes can imply print, stained glass, barcode, circuitry, or interference.
+- **Surface + core layering**: combine a large ambient field, a symbolic core, and smaller moving accents so the scene has hierarchy.
+- **Time-evolving scene**: use 1 / 5 / 10 / 30 minute evolution to slowly shift scale, speed, density, and emotional intensity.
 
 ## 13.1) Visibility Tips (SDF)
 - The sculpture volume is large. Small SDF shapes can appear “invisible.”

@@ -19,7 +19,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v47";
+const DASHBOARD2_VERSION = "v48";
 const TOTAL_NEWS_ITEMS = 20;
 const RSS_CACHE_TTL_MS = 20 * 60 * 1000;
 const DOC_MD_URL =
@@ -1371,7 +1371,7 @@ function connectMQTT() {
     if (topic !== mqttEvtTopic()) return;
     maybeDownloadPyramidError(s);
     if (!logSummarizedEvtMessage(topic, s)) {
-      logLine(topic + ": " + s);
+      appendConsoleLine(topic + ": " + s, false);
     }
     maybeAutoFixFromEvt(s);
     tryAutoFillEditorFromGetCode(s);
@@ -1473,6 +1473,7 @@ function shouldBroadcastConsoleLine(line) {
   if (!s) return false;
   if (s.startsWith("[remote] ")) return false;
   if (s.includes('"code":"')) return false;
+  if (s.includes("/evt:")) return false;
   return true;
 }
 
@@ -1756,7 +1757,7 @@ function logSummarizedEvtMessage(topic, msg) {
     if (consumeEvtObjectSilently(obj)) return true;
     const formatted = formatEvtObjectForConsole(topic, obj);
     if (!formatted) return false;
-    logLine(formatted);
+    appendConsoleLine(formatted, false);
     return true;
   } catch (_) {}
   return false;
@@ -2896,7 +2897,7 @@ class WrenchPreview3D {
 
       p.push();
       p.scale(displayMode === "preview" ? 1.9 : 1.15);
-      p.scale(1, -1, 1);
+      p.scale(-1, -1, 1);
       p.rotateX(-0.25);
       this.drawGroundPlane(p);
       this.drawPyramid(p);
