@@ -120,21 +120,6 @@ body.preview-mode {
   color: #8d8d8d;
 }
 
-.sidebar-status {
-  margin-top: 4px;
-  background: #2c2c2c;
-  color: #f5f1e8;
-}
-
-.sidebar-status.is-connected {
-  background: #3a3a3a;
-}
-
-.sidebar-meta {
-  background: #252525;
-  color: #bcbcbc;
-}
-
 .sidebar-link {
   margin-top: 2px;
   padding-left: 10px;
@@ -191,8 +176,12 @@ body.preview-mode {
   flex: 1 1 33.33%;
 }
 
+.panel-section.monitor-section {
+  flex: 0.44 1 14%;
+}
+
 .panel-section.device-info {
-  flex: 0.58 1 20%;
+  flex: 0.62 1 19%;
   position: relative;
 }
 
@@ -210,14 +199,23 @@ body.preview-mode {
   text-shadow: 0 0 14px rgba(241, 208, 75, 0.22);
 }
 
+.device-info .panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .device-status {
-  position: absolute;
-  top: 14px;
-  right: 0;
+  position: static;
+  display: inline-block;
+  margin-left: 0;
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: #c89b3c;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
 .device-status.is-online {
@@ -250,6 +248,109 @@ body.preview-mode {
   display: flex;
   gap: 6px;
   margin: 0 0 8px;
+}
+
+.monitor-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-content: start;
+  padding: 8px;
+  background: #000 !important;
+  box-shadow: none;
+  overflow: auto;
+}
+
+.monitor-circle {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 2px solid rgba(245, 238, 224, 0.55);
+  background: rgba(255, 255, 255, 0.03);
+  justify-self: center;
+  align-self: center;
+}
+
+.monitor-circle.is-warning {
+  background: rgba(232, 182, 52, 0.28);
+}
+
+.monitor-circle.is-offline {
+  background: rgba(220, 42, 42, 0.55);
+  border-color: rgba(255, 110, 110, 0.8);
+}
+
+.monitor-circle.is-online {
+  border-color: rgba(245, 238, 224, 0.8);
+}
+
+.monitor-circle.is-purple {
+  background: rgba(164, 106, 255, 0.5);
+  border-color: rgba(196, 156, 255, 0.9);
+}
+
+.monitor-circle.is-blink {
+  animation: dashboard-blink 1s steps(2, start) infinite;
+}
+
+.monitor-countdown {
+  width: 100%;
+}
+
+.monitor-stats {
+  width: 100%;
+}
+
+.monitor-grid {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+}
+
+.monitor-grid-top {
+  grid-template-columns: repeat(4, minmax(55px, 1fr));
+  grid-auto-rows: minmax(38px, 1fr);
+}
+
+.monitor-grid-stats {
+  grid-template-columns: repeat(4, minmax(55px, 1fr));
+  grid-auto-rows: minmax(38px, 1fr);
+}
+
+.monitor-card {
+  background: var(--bg-0);
+  border-radius: 7px;
+  padding: 6px 8px;
+  min-width: 0;
+  aspect-ratio: auto;
+  min-height: 38px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  overflow: hidden;
+}
+
+.monitor-circle-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.monitor-label {
+  color: #b5b5b5;
+  font-size: 9px;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.monitor-value {
+  color: #f0f0f0;
+  font-size: 12px;
+  line-height: 1.1;
+  word-break: break-word;
 }
 
 .reflection-toggle {
@@ -314,7 +415,7 @@ div {
 
 .metrics-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   padding: 8px;
   align-content: start;
@@ -344,7 +445,8 @@ div {
 }
 
 .console-section .panel-box,
-.device-info .panel-box {
+.device-info .panel-box,
+.monitor-section .panel-box {
   background: #000000;
 }
 
@@ -488,14 +590,10 @@ body.preview-mode #mode-toggle {
 
   .sidebar-button,
   .sidebar-select,
-  .sidebar-status,
-  .sidebar-meta,
   .sidebar-link {
     width: 100%;
   }
 
-  .sidebar-status,
-  .sidebar-meta,
   .sidebar-link {
     grid-column: 1 / -1;
   }

@@ -19,7 +19,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v49";
+const DASHBOARD2_VERSION = "v63";
 const TOTAL_NEWS_ITEMS = 20;
 const RSS_CACHE_TTL_MS = 20 * 60 * 1000;
 const DOC_MD_URL =
@@ -43,6 +43,7 @@ let lastDesignRationale = "";
 let lastLocation = "";
 let lastCompileErrText = "";
 let lastCompileErrMs = 0;
+let lastCodeUpdateAt = 0;
 let selectedGptModel = DEFAULT_GPT_MODEL;
 let selectedGptTemperature = 0.6;
 let selectedPyrId = "reflector1";
@@ -69,6 +70,10 @@ let reflectionTextToggleButton = null;
 let reflectionRationaleToggleButton = null;
 let metricsDiv;
 let deviceStatusDiv;
+let monitorDiv;
+let monitorCircleDiv;
+let monitorCountdownDiv;
+let monitorStatsDiv;
 let emptyDiv;
 let previewDiv;
 let statusText = "MQTT not connected";
@@ -80,6 +85,7 @@ let infoColumnEl;
 let editorSectionEl;
 let consoleSectionEl;
 let reflectionSectionEl;
+let monitorSectionEl;
 let metricsSectionEl;
 let emptySectionEl;
 let deviceMetrics = {
@@ -95,11 +101,12 @@ let previewRefreshTimer = null;
 let displayMode = "preview";
 let modeToggleButton = null;
 let reflectionMeasureCanvas = null;
-let sidebarStatusDiv = null;
 let sidebarIntervalDiv = null;
 let sidebarModelSelect = null;
 let sidebarTempSelect = null;
 let sidebarAutomationSelect = null;
+let sidebarActionSelect = null;
+let sidebarActionSignature = "";
 let sidebarPyrSelect = null;
 let sidebarAuthButton = null;
 let sidebarVersionDiv = null;
@@ -172,9 +179,26 @@ function createDomPanels() {
   descriptionDiv.parent(reflectionSectionEl);
   descriptionDiv.class("panel-box");
   styleLogPanel(descriptionDiv, "#000000");
-  descriptionDiv.style("font-size", "17px");
-  descriptionDiv.style("line-height", "1.55");
+  descriptionDiv.style("font-size", "21px");
+  descriptionDiv.style("line-height", "1.7");
   descriptionDiv.style("font-family", "\"IBM Plex Sans\", sans-serif");
+  descriptionDiv.style("font-weight", "400");
+
+  monitorDiv = createDiv("");
+  monitorDiv.parent(monitorSectionEl);
+  monitorDiv.class("panel-box monitor-box");
+
+  monitorCircleDiv = createDiv("");
+  monitorCircleDiv.parent(monitorDiv);
+  monitorCircleDiv.class("monitor-circle");
+
+  monitorCountdownDiv = createDiv("");
+  monitorCountdownDiv.parent(monitorDiv);
+  monitorCountdownDiv.class("monitor-countdown");
+
+  monitorStatsDiv = createDiv("");
+  monitorStatsDiv.parent(monitorDiv);
+  monitorStatsDiv.class("monitor-stats");
 
   metricsDiv = createDiv("");
   metricsDiv.parent(metricsSectionEl);
@@ -182,7 +206,9 @@ function createDomPanels() {
   metricsDiv.style("overflow", "auto");
 
   deviceStatusDiv = createDiv("Awaiting");
-  deviceStatusDiv.parent(metricsSectionEl);
+  const metricsTitle = metricsSectionEl.elt.querySelector(".panel-title");
+  if (metricsTitle) deviceStatusDiv.parent(metricsTitle);
+  else deviceStatusDiv.parent(metricsSectionEl);
   deviceStatusDiv.class("device-status is-warning");
 
   emptyDiv = createDiv("");
@@ -215,28 +241,15 @@ function createSidebarControls() {
       if (client) disconnectMQTT();
       else connectMQTT();
     }],
-    ["getCode", "Get Code", () => cmdGetCode()],
     ["runNow", "Run Now", () => cmdRunNow()],
-    ["storeOnly", "Store Only", () => cmdSetCode()],
-    ["runStore", "Run + Store", () => cmdRunAndStore()],
-    ["reboot", "Reboot", () => cmdReboot()],
     ["generate", "Generate Wrench", () => generateWrenchAndRun()],
-    ["testRss", "Test RSS", () => testRssFeeds()],
     ["debugDownloads", "Debug: OFF", () => toggleDebugDownloads()],
     ["autoFix", "Auto-fix: OFF", () => {
       autoFixEnabled = !autoFixEnabled;
       logLine("Auto-fix is now " + (autoFixEnabled ? "ON" : "OFF"));
       syncSidebarControls();
     }],
-    ["automation", "Automation: OFF", () => toggleAutomation()],
-    ["remoteAutomation", "Remote Stop", () => toggleRemoteAutomationEverywhere()],
-    ["insertExample", "Insert Example", () => {
-      setEditorValue(defaultWrenchExample());
-      refreshPreview();
-    }],
-    ["clearConsole", "Clear Console", () => {
-      consoleDiv.html("");
-    }]
+    ["automation", "Automation: OFF", () => toggleAutomation()]
   ];
 
   for (const [key, label, handler] of buttonSpecs) {
@@ -272,6 +285,7 @@ function createSidebarControls() {
     selectedPyrId = nextId;
     persistSelectedPyrId();
     syncReflectorUrl();
+    syncSectionTitles();
     logLine("Reflector target: " + selectedPyrId);
     logLine("cmd: " + mqttCmdTopic());
     logLine("evt: " + mqttEvtTopic());
@@ -338,13 +352,29 @@ function createSidebarControls() {
     syncSidebarControls();
   });
 
-  sidebarStatusDiv = createDiv("");
-  sidebarStatusDiv.parent(wrap);
-  sidebarStatusDiv.class("sidebar-status");
-
-  sidebarIntervalDiv = createDiv("");
-  sidebarIntervalDiv.parent(wrap);
-  sidebarIntervalDiv.class("sidebar-meta");
+  sidebarActionSelect = createSelect();
+  sidebarActionSelect.parent(wrap);
+  sidebarActionSelect.class("sidebar-select");
+  rebuildActionsDropdown();
+  sidebarActionSelect.addClass("tone-low");
+  sidebarActionSelect.changed(() => {
+    const action = sidebarActionSelect.value();
+    sidebarActionSelect.selected("");
+    if (!action) return;
+    if (action === "getCode") cmdGetCode();
+    if (action === "storeOnly") cmdSetCode();
+    if (action === "runStore") cmdRunAndStore();
+    if (action === "reboot") cmdReboot();
+    if (action === "testRss") testRssFeeds();
+    if (action === "remoteAutomation") toggleRemoteAutomationEverywhere();
+    if (action === "insertExample") {
+      setEditorValue(defaultWrenchExample());
+      refreshPreview();
+    }
+    if (action === "clearConsole") {
+      consoleDiv.html("");
+    }
+  });
 
   sidebarShiftrLink = createA("https://reflector.cloud.shiftr.io/", "Open Shiftr", "_blank");
   sidebarShiftrLink.parent(wrap);
@@ -361,27 +391,17 @@ function createSidebarControls() {
   );
   sidebarPromptLink.parent(wrap);
   sidebarPromptLink.class("sidebar-link");
+
 }
 
 function syncSidebarControls() {
-  if (!sidebarStatusDiv) return;
-  sidebarStatusDiv.html("Status: " + statusText);
-  sidebarStatusDiv.removeClass("is-connected");
-  sidebarStatusDiv.removeClass("is-disconnected");
-  sidebarStatusDiv.addClass(isConnected ? "is-connected" : "is-disconnected");
-
   updateSidebarButton("connectToggle", {
     label: client ? "Disconnect" : "Connect",
     disabled: false,
     tone: client ? "mid" : "mid"
   });
-  updateSidebarButton("getCode", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "mid" : "off" });
   updateSidebarButton("runNow", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "mid" : "off" });
-  updateSidebarButton("storeOnly", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "mid" : "off" });
-  updateSidebarButton("runStore", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "mid" : "off" });
-  updateSidebarButton("reboot", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "low" : "off" });
   updateSidebarButton("generate", { disabled: !isConnected || generationInProgress || !isAuthenticated, tone: isConnected && !generationInProgress && isAuthenticated ? "amber" : "off" });
-  updateSidebarButton("testRss", { disabled: generationInProgress, tone: generationInProgress ? "off" : "low" });
   updateSidebarButton("debugDownloads", { label: debugDownloadsEnabled ? "Debug: ON" : "Debug: OFF", disabled: false, tone: debugDownloadsEnabled ? "high" : "low" });
   updateSidebarButton("autoFix", { label: autoFixEnabled ? "Auto-fix: ON" : "Auto-fix: OFF", disabled: !isAuthenticated, tone: autoFixEnabled && isAuthenticated ? "high" : "off" });
   updateSidebarButton("automation", {
@@ -389,13 +409,6 @@ function syncSidebarControls() {
     disabled: !isConnected || generationInProgress || !isAuthenticated || remoteAutomationStopped,
     tone: automationEnabled && isAuthenticated ? "high" : "off"
   });
-  updateSidebarButton("remoteAutomation", {
-    label: remoteAutomationStopped ? "Remote Start" : "Remote Stop",
-    disabled: !isConnected || !isAuthenticated,
-    tone: isConnected && isAuthenticated ? "low" : "off"
-  });
-  updateSidebarButton("insertExample", { disabled: false, tone: "low" });
-  updateSidebarButton("clearConsole", { disabled: false, tone: "low" });
   if (sidebarAuthButton) {
     sidebarAuthButton.html(isAuthenticated ? "Log Out" : "Log In");
     sidebarAuthButton.removeClass("tone-high");
@@ -443,15 +456,17 @@ function syncSidebarControls() {
     else sidebarAutomationSelect.attribute("disabled", "");
     sidebarAutomationSelect.style("display", isAuthenticated ? "block" : "none");
   }
+  if (sidebarActionSelect) {
+    sidebarActionSelect.removeClass("tone-high");
+    sidebarActionSelect.removeClass("tone-mid");
+    sidebarActionSelect.removeClass("tone-low");
+    sidebarActionSelect.removeClass("tone-off");
+    sidebarActionSelect.addClass(generationInProgress ? "tone-off" : "tone-low");
+    if (generationInProgress) sidebarActionSelect.attribute("disabled", "");
+    else sidebarActionSelect.removeAttribute("disabled");
+  }
   setPrivilegedControlsVisible(isAuthenticated);
 
-  if (sidebarIntervalDiv) {
-    sidebarIntervalDiv.html(
-      isAuthenticated
-        ? `${selectedPyrId} · ${selectedGptModel} · t${selectedGptTemperature.toFixed(1)}`
-        : `${selectedPyrId} · read-only`
-    );
-  }
   if (sidebarReflectionLink) {
     sidebarReflectionLink.attribute("href", reflectionViewUrl());
   }
@@ -472,16 +487,11 @@ function updateSidebarButton(key, { label, disabled, tone }) {
 
 function setPrivilegedControlsVisible(visible) {
   const privilegedKeys = [
-    "getCode",
     "runNow",
-    "storeOnly",
-    "runStore",
-    "reboot",
     "generate",
     "debugDownloads",
     "autoFix",
-    "automation",
-    "remoteAutomation"
+    "automation"
   ];
   for (const key of privilegedKeys) {
     const btn = sidebarButtons[key];
@@ -490,6 +500,24 @@ function setPrivilegedControlsVisible(visible) {
   }
   if (sidebarTempSelect) sidebarTempSelect.style("display", visible ? "block" : "none");
   if (sidebarAutomationSelect) sidebarAutomationSelect.style("display", visible ? "block" : "none");
+}
+
+function rebuildActionsDropdown() {
+  if (!sidebarActionSelect) return;
+  const signature = remoteAutomationStopped ? "remote-start" : "remote-stop";
+  if (signature === sidebarActionSignature) return;
+  sidebarActionSignature = signature;
+  sidebarActionSelect.elt.innerHTML = "";
+  sidebarActionSelect.option("Actions", "");
+  sidebarActionSelect.option("Get Code", "getCode");
+  sidebarActionSelect.option("Store Only", "storeOnly");
+  sidebarActionSelect.option("Run + Store", "runStore");
+  sidebarActionSelect.option("Reboot", "reboot");
+  sidebarActionSelect.option("Test RSS", "testRss");
+  sidebarActionSelect.option(remoteAutomationStopped ? "Remote Start" : "Remote Stop", "remoteAutomation");
+  sidebarActionSelect.option("Insert Example", "insertExample");
+  sidebarActionSelect.option("Clear Console", "clearConsole");
+  sidebarActionSelect.selected("");
 }
 
 function automationIntervalLabel() {
@@ -775,6 +803,7 @@ function resetSelectedReflectorState() {
   lastDescription = "";
   lastDesignRationale = "";
   lastLocation = "";
+  lastCodeUpdateAt = 0;
   resetPyramidMonitorForReflector();
   descriptionDiv.html("");
   if (previewController) previewController.setReflectionText("");
@@ -818,6 +847,11 @@ function currentReflectionPanelText() {
   return reflectionWithLocation(lastDescription, lastLocation);
 }
 
+function setReflectionPanelText() {
+  if (!descriptionDiv || !descriptionDiv.elt) return;
+  descriptionDiv.elt.textContent = currentReflectionPanelText();
+}
+
 function setReflectionPanelMode(nextMode) {
   reflectionPanelMode = nextMode === "rationale" ? "rationale" : "reflection";
   if (reflectionTextToggleButton) {
@@ -826,9 +860,7 @@ function setReflectionPanelMode(nextMode) {
   if (reflectionRationaleToggleButton) {
     reflectionRationaleToggleButton.toggleClass("is-active", reflectionPanelMode === "rationale");
   }
-  if (descriptionDiv) {
-    descriptionDiv.html(currentReflectionPanelText());
-  }
+  setReflectionPanelText();
   updateReflectionTypography();
 }
 
@@ -1046,6 +1078,7 @@ function getPyramidMonitorState() {
 function updatePyramidMonitorUi() {
   const monitor = getPyramidMonitorState();
   renderDeviceStatus(monitor);
+  renderDebugMonitorPanel(monitor);
   renderMetrics();
   if (previewController) {
     previewController.setMonitorState(monitor);
@@ -1076,6 +1109,90 @@ function renderDeviceStatus(monitor = getPyramidMonitorState()) {
   if ((monitor.state === "offline" && monitor.blinkOffline) || monitor.state === "purple") {
     deviceStatusDiv.addClass("is-blink");
   }
+}
+
+function renderDebugMonitorPanel(monitor = getPyramidMonitorState()) {
+  if (!monitorDiv || displayMode === "preview") return;
+  if (!monitorCircleDiv || !monitorCountdownDiv || !monitorStatsDiv) return;
+
+  monitorCircleDiv.removeClass("is-online", "is-warning", "is-offline", "is-purple", "is-blink");
+  monitorCircleDiv.addClass(`is-${monitor.state}`);
+  if ((monitor.state === "offline" && monitor.blinkOffline) || monitor.state === "purple") {
+    monitorCircleDiv.addClass("is-blink");
+  }
+
+  const stateLabel = monitor.state === "online"
+    ? "Online"
+    : monitor.state === "purple"
+      ? "High FPS"
+      : monitor.state === "offline"
+        ? "Offline"
+        : (monitor.hasEverBeenOnline ? "Warning" : "Awaiting");
+  const nextRefresh = automationEnabled ? (monitor.countdownLabel || "--") : "--";
+  const codeAge = formatElapsedSinceCodeUpdate();
+
+  if (monitor.state === "online" && automationEnabled) {
+    const pct = Math.max(0, Math.min(1, monitor.progress || 0));
+    monitorCircleDiv.elt.style.background =
+      `conic-gradient(rgba(245,238,224,0.9) ${pct * 360}deg, rgba(255,255,255,0.06) 0deg)`;
+  } else {
+    monitorCircleDiv.elt.style.background = "";
+  }
+
+  monitorCircleDiv.parent(monitorDiv);
+  monitorCountdownDiv.html(
+    `<div class="monitor-grid monitor-grid-top">
+      <div class="monitor-card monitor-circle-card"></div>
+      <div class="monitor-card">
+        <div class="monitor-label">State</div>
+        <div class="monitor-value">${stateLabel}</div>
+      </div>
+      <div class="monitor-card">
+        <div class="monitor-label">Next</div>
+        <div class="monitor-value">${nextRefresh}</div>
+      </div>
+      <div class="monitor-card">
+        <div class="monitor-label">Code</div>
+        <div class="monitor-value">${codeAge}</div>
+      </div>
+    </div>`
+  );
+  const circleSlot = monitorCountdownDiv.elt.querySelector(".monitor-circle-card");
+  if (circleSlot) {
+    monitorCircleDiv.parent(circleSlot);
+  }
+  monitorStatsDiv.html(
+    `<div class="monitor-grid monitor-grid-stats">
+      <div class="monitor-card">
+        <div class="monitor-label">Wrench</div>
+        <div class="monitor-value">${monitor.stats.wrenchErrors}</div>
+      </div>
+      <div class="monitor-card">
+        <div class="monitor-label">RSS</div>
+        <div class="monitor-value">${monitor.stats.rssErrors}</div>
+      </div>
+      <div class="monitor-card">
+        <div class="monitor-label">Other</div>
+        <div class="monitor-value">${monitor.stats.otherErrors}</div>
+      </div>
+      <div class="monitor-card">
+        <div class="monitor-label">Reboots</div>
+        <div class="monitor-value">${monitor.stats.reboots}</div>
+      </div>
+    </div>`
+  );
+}
+
+function formatElapsedSinceCodeUpdate() {
+  if (!lastCodeUpdateAt) return "--";
+  const ms = Math.max(0, Date.now() - lastCodeUpdateAt);
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
 }
 
 function updateReflectionTypography() {
@@ -1498,6 +1615,7 @@ function publishReflectionUpdate(reflection, code, designRationale, location) {
 
 function publishCodeState(code, source, meta = {}) {
   if (!client || !isConnected) return;
+  lastCodeUpdateAt = Date.now();
   const payload = JSON.stringify({
     code: code || "",
     source: source || "dashboard2",
@@ -1644,7 +1762,7 @@ function applyReflectionMessage(msg) {
       rememberPromptReflection(reflectionText);
       lastDesignRationale = typeof obj.design_rationale === "string" ? obj.design_rationale : "";
       lastLocation = typeof obj.location === "string" ? obj.location : "";
-      descriptionDiv.html(currentReflectionPanelText());
+      setReflectionPanelText();
       if (previewController) previewController.setReflectionText(reflectionWithLocation(lastDescription, lastLocation));
       updateReflectionTypography();
     }
@@ -1664,6 +1782,8 @@ function applyCodeStateMessage(msg) {
   try {
     const obj = JSON.parse(msg);
     if (typeof obj.code !== "string") return;
+    const updatedAt = Date.parse(obj.updated_at || "");
+    lastCodeUpdateAt = Number.isFinite(updatedAt) ? updatedAt : Date.now();
     if (typeof obj.reflection === "string") {
       lastDescription = obj.reflection;
       rememberPromptReflection(obj.reflection);
@@ -1678,7 +1798,7 @@ function applyCodeStateMessage(msg) {
       setEditorValue(obj.code);
       refreshPreview();
     }
-    descriptionDiv.html(currentReflectionPanelText());
+    setReflectionPanelText();
     if (previewController) previewController.setReflectionText(reflectionWithLocation(lastDescription, lastLocation));
     updateReflectionTypography();
     logLine("Loaded retained code state.");
@@ -1706,7 +1826,7 @@ function applyDashboardSyncMessage(msg) {
         rememberPromptReflection(reflectionText);
         lastDesignRationale = typeof obj.design_rationale === "string" ? obj.design_rationale : lastDesignRationale;
         lastLocation = typeof obj.location === "string" ? obj.location : lastLocation;
-        descriptionDiv.html(currentReflectionPanelText());
+        setReflectionPanelText();
         if (previewController) previewController.setReflectionText(reflectionWithLocation(lastDescription, lastLocation));
         updateReflectionTypography();
       }
@@ -1943,7 +2063,7 @@ async function generateWrenchAndRun() {
       rememberPromptReflection(out.reflection);
       lastDesignRationale = out.design_rationale || "";
       lastLocation = out.location || "";
-      descriptionDiv.html(currentReflectionPanelText());
+      setReflectionPanelText();
       if (previewController) previewController.setReflectionText(reflectionWithLocation(lastDescription, lastLocation));
       updateReflectionTypography();
       logLine("— ChatGPT reflection —");
@@ -2464,6 +2584,7 @@ function tryAutoFillEditorFromGetCode(msg) {
   try {
     const obj = JSON.parse(msg);
     if (obj.ok === true && typeof obj.code === "string") {
+      lastCodeUpdateAt = Date.now();
       setEditorValue(obj.code);
       refreshPreview();
       pendingGetCode = false;
@@ -2694,13 +2815,23 @@ function createLayout() {
 
   emptySectionEl = createSection(editorColumnEl, "editor", "Preview");
   reflectionSectionEl = createSection(editorColumnEl, "console", "Reflection");
+  monitorSectionEl = createSection(infoColumnEl, "third", "Status");
   metricsSectionEl = createSection(infoColumnEl, "third", "Device Info");
   editorSectionEl = createSection(infoColumnEl, "third", "Wrench Code");
   consoleSectionEl = createSection(infoColumnEl, "third", "Console");
   consoleSectionEl.addClass("console-section");
   reflectionSectionEl.addClass("reflection-section");
+  monitorSectionEl.addClass("monitor-section");
   metricsSectionEl.addClass("device-info");
   emptySectionEl.addClass("preview-section");
+  syncSectionTitles();
+}
+
+function syncSectionTitles() {
+  const previewTitle = emptySectionEl?.elt?.querySelector(".panel-title");
+  if (previewTitle) {
+    previewTitle.textContent = "Preview " + selectedPyrId;
+  }
 }
 
 function createSection(parentEl, kind, title) {
@@ -3250,6 +3381,9 @@ class WrenchPreview3D {
   }
 
   drawPreviewIndicator(p) {
+    if (displayMode !== "preview") {
+      return;
+    }
     const monitor = this.monitor || getPyramidMonitorState();
     const showAutomationDetails = automationEnabled;
     const compact = !!monitor.compact;
