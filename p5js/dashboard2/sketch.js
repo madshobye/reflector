@@ -19,7 +19,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v46";
+const DASHBOARD2_VERSION = "v47";
 const TOTAL_NEWS_ITEMS = 20;
 const RSS_CACHE_TTL_MS = 20 * 60 * 1000;
 const DOC_MD_URL =
@@ -3133,6 +3133,7 @@ class WrenchPreview3D {
 
   drawPreviewIndicator(p) {
     const monitor = this.monitor || getPyramidMonitorState();
+    const showAutomationDetails = automationEnabled;
     const compact = !!monitor.compact;
     const size = compact ? 10 : 100;
     const cx = compact ? p.width - 16 : p.width - 78;
@@ -3147,9 +3148,11 @@ class WrenchPreview3D {
       p.strokeWeight(compact ? 1.5 : 2.5);
       p.noFill();
       p.circle(cx, cy, size);
-      p.noStroke();
-      p.fill(245, 238, 224, 170);
-      p.arc(cx, cy, size - 6, size - 6, -p.HALF_PI, -p.HALF_PI + p.TWO_PI * monitor.progress, p.PIE);
+      if (showAutomationDetails) {
+        p.noStroke();
+        p.fill(245, 238, 224, 170);
+        p.arc(cx, cy, size - 6, size - 6, -p.HALF_PI, -p.HALF_PI + p.TWO_PI * monitor.progress, p.PIE);
+      }
     } else if (monitor.state === "purple") {
       if (monitor.blinkOn) {
         p.fill(164, 106, 255, 220);
@@ -3164,7 +3167,7 @@ class WrenchPreview3D {
       p.circle(cx, cy, size);
     }
 
-    if (!compact) {
+    if (!compact && showAutomationDetails) {
       if (monitor.countdownLabel) {
         p.fill(245, 238, 224, 210);
         p.textAlign(p.CENTER, p.TOP);
