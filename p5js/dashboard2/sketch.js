@@ -3,6 +3,8 @@ window.showOverlay = false;
 const AUTOMATION_INTERVAL_OPTIONS_MINUTES = [0, 5, 15, 30, 60, 120, 240, 360, 600];
 const AUTOMATION_INTERVAL_KEY = "dashboard2_automation_interval_minutes";
 const GPT_MODEL_KEY = "dashboard2_gpt_model";
+const GPT_TEMPERATURE_KEY = "dashboard2_gpt_temperature";
+const GPT_TEMPERATURE_OPTIONS = [0.2, 0.4, 0.6, 0.8, 1.0, 1.2];
 const GPT_MODEL_OPTIONS = [
   "gpt-5.1-codex",
   "gpt-5.2-codex",
@@ -17,8 +19,8 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v33";
-const TOTAL_NEWS_ITEMS = 10;
+const DASHBOARD2_VERSION = "v46";
+const TOTAL_NEWS_ITEMS = 20;
 const RSS_CACHE_TTL_MS = 20 * 60 * 1000;
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
@@ -42,6 +44,7 @@ let lastLocation = "";
 let lastCompileErrText = "";
 let lastCompileErrMs = 0;
 let selectedGptModel = DEFAULT_GPT_MODEL;
+let selectedGptTemperature = 0.6;
 let selectedPyrId = "reflector1";
 let isAuthenticated = false;
 const dashboardInstanceId = "dashboard2-" + Math.floor(Math.random() * 1e9) + "-" + Date.now();
@@ -53,6 +56,7 @@ let mqttKeyEncrypted = "U2FsdGVkX1+f60bzOgPSBUTFJpFtLdWNgjs5QTNiW9BsDukPIRX8Vtph
 
 let client = null;
 let isConnected = false;
+let mqttDisconnectRequested = false;
 let pendingGetCode = false;
 let lastRequestId = 0;
 
@@ -64,6 +68,7 @@ let reflectionToggleWrap = null;
 let reflectionTextToggleButton = null;
 let reflectionRationaleToggleButton = null;
 let metricsDiv;
+let deviceStatusDiv;
 let emptyDiv;
 let previewDiv;
 let statusText = "MQTT not connected";
@@ -93,6 +98,8 @@ let reflectionMeasureCanvas = null;
 let sidebarStatusDiv = null;
 let sidebarIntervalDiv = null;
 let sidebarModelSelect = null;
+let sidebarTempSelect = null;
+let sidebarAutomationSelect = null;
 let sidebarPyrSelect = null;
 let sidebarAuthButton = null;
 let sidebarVersionDiv = null;
@@ -102,12 +109,16 @@ let sidebarPromptLink = null;
 let sidebarButtons = {};
 let sidebarSyncTimer = null;
 let reflectionPanelMode = "reflection";
+let automationNextRunAt = 0;
+let previewIndicatorCompact = loadPreviewIndicatorCompact();
+let pyramidMonitor = createInitialPyramidMonitor();
 
 async function setup() {
   noCanvas();
   displayMode = loadDisplayMode();
   automationIntervalMinutes = loadAutomationIntervalMinutes();
   selectedGptModel = loadSelectedGptModel();
+  selectedGptTemperature = loadSelectedGptTemperature();
   selectedPyrId = loadSelectedPyrId();
   syncReflectorUrl();
   createLayout();
@@ -124,6 +135,7 @@ async function setup() {
   logLine("evt: " + mqttEvtTopic());
   logLine(isAuthenticated ? "Authenticated mode." : "Read-only mode.");
   renderMetrics();
+  updatePyramidMonitorUi();
   applyDisplayMode();
   updateDomLayout();
   setupPreview();
@@ -165,6 +177,10 @@ function createDomPanels() {
   metricsDiv.parent(metricsSectionEl);
   metricsDiv.class("panel-box");
   metricsDiv.style("overflow", "auto");
+
+  deviceStatusDiv = createDiv("Awaiting");
+  deviceStatusDiv.parent(metricsSectionEl);
+  deviceStatusDiv.class("device-status is-warning");
 
   emptyDiv = createDiv("");
   emptyDiv.parent(emptySectionEl);
@@ -208,7 +224,6 @@ function createSidebarControls() {
       logLine("Auto-fix is now " + (autoFixEnabled ? "ON" : "OFF"));
       syncSidebarControls();
     }],
-    ["automationInterval", automationIntervalLabel(), () => cycleAutomationInterval()],
     ["automation", "Automation: OFF", () => toggleAutomation()],
     ["remoteAutomation", "Remote Stop", () => toggleRemoteAutomationEverywhere()],
     ["insertExample", "Insert Example", () => {
@@ -224,6 +239,7 @@ function createSidebarControls() {
     const btn = createButton(label);
     btn.parent(wrap);
     btn.class("sidebar-button");
+    btn.addClass("tone-low");
     btn.mousePressed(handler);
     sidebarButtons[key] = btn;
   }
@@ -231,6 +247,7 @@ function createSidebarControls() {
   sidebarAuthButton = createButton(isAuthenticated ? "Log Out" : "Log In");
   sidebarAuthButton.parent(wrap);
   sidebarAuthButton.class("sidebar-button");
+  sidebarAuthButton.addClass("tone-low");
   sidebarAuthButton.mousePressed(() => {
     if (isAuthenticated) logoutAuthenticatedMode();
     else loginAuthenticatedMode();
@@ -243,6 +260,7 @@ function createSidebarControls() {
     sidebarPyrSelect.option(pyrId, pyrId);
   }
   sidebarPyrSelect.selected(selectedPyrId);
+  sidebarPyrSelect.addClass("tone-low");
   sidebarPyrSelect.changed(() => {
     const nextId = sidebarPyrSelect.value();
     if (nextId === selectedPyrId) return;
@@ -268,10 +286,51 @@ function createSidebarControls() {
     sidebarModelSelect.option(model, model);
   }
   sidebarModelSelect.selected(selectedGptModel);
+  sidebarModelSelect.addClass("tone-low");
   sidebarModelSelect.changed(() => {
     selectedGptModel = sidebarModelSelect.value();
     persistSelectedGptModel();
     logLine("GPT model: " + selectedGptModel);
+    syncSidebarControls();
+  });
+
+  sidebarTempSelect = createSelect();
+  sidebarTempSelect.parent(wrap);
+  sidebarTempSelect.class("sidebar-select");
+  for (const temp of GPT_TEMPERATURE_OPTIONS) {
+    sidebarTempSelect.option("Temp: " + temp.toFixed(1), String(temp));
+  }
+  sidebarTempSelect.selected(String(selectedGptTemperature));
+  sidebarTempSelect.addClass("tone-low");
+  sidebarTempSelect.changed(() => {
+    selectedGptTemperature = Number(sidebarTempSelect.value());
+    persistSelectedGptTemperature();
+    logLine("GPT temperature: " + selectedGptTemperature.toFixed(1));
+    syncSidebarControls();
+  });
+
+  sidebarAutomationSelect = createSelect();
+  sidebarAutomationSelect.parent(wrap);
+  sidebarAutomationSelect.class("sidebar-select");
+  for (const mins of AUTOMATION_INTERVAL_OPTIONS_MINUTES) {
+    const label = mins >= 60
+      ? "Refresh: " + ((mins / 60) % 1 === 0 ? (mins / 60) : (mins / 60).toFixed(1)) + "h"
+      : "Refresh: " + mins + "m";
+    sidebarAutomationSelect.option(label, String(mins));
+  }
+  sidebarAutomationSelect.selected(String(automationIntervalMinutes));
+  sidebarAutomationSelect.addClass("tone-low");
+  sidebarAutomationSelect.changed(() => {
+    automationIntervalMinutes = Number(sidebarAutomationSelect.value());
+    persistAutomationIntervalMinutes();
+    logLine(
+      automationIntervalMinutes === 0
+        ? "Automation refresh set to 0 minutes (rerun immediately)."
+        : "Automation refresh set to " + automationIntervalMinutes + " minutes."
+    );
+    if (automationEnabled) {
+      scheduleNextAutomationRun();
+    }
     syncSidebarControls();
   });
 
@@ -320,7 +379,6 @@ function syncSidebarControls() {
   updateSidebarButton("generate", { disabled: !isConnected || generationInProgress || !isAuthenticated, tone: isConnected && !generationInProgress && isAuthenticated ? "amber" : "off" });
   updateSidebarButton("debugDownloads", { label: debugDownloadsEnabled ? "Debug: ON" : "Debug: OFF", disabled: false, tone: debugDownloadsEnabled ? "high" : "low" });
   updateSidebarButton("autoFix", { label: autoFixEnabled ? "Auto-fix: ON" : "Auto-fix: OFF", disabled: !isAuthenticated, tone: autoFixEnabled && isAuthenticated ? "high" : "off" });
-  updateSidebarButton("automationInterval", { label: automationIntervalLabel(), disabled: !isAuthenticated, tone: automationIntervalMinutes === 0 && isAuthenticated ? "high" : (isAuthenticated ? "low" : "off") });
   updateSidebarButton("automation", {
     label: automationEnabled ? "Automation: ON" : "Automation: OFF",
     disabled: !isConnected || generationInProgress || !isAuthenticated || remoteAutomationStopped,
@@ -358,12 +416,34 @@ function syncSidebarControls() {
     sidebarModelSelect.addClass(isAuthenticated ? (isConnected ? "tone-mid" : "tone-low") : "tone-off");
     sidebarModelSelect.style("display", isAuthenticated ? "block" : "none");
   }
+  if (sidebarTempSelect) {
+    sidebarTempSelect.value(String(selectedGptTemperature));
+    sidebarTempSelect.removeClass("tone-high");
+    sidebarTempSelect.removeClass("tone-mid");
+    sidebarTempSelect.removeClass("tone-low");
+    sidebarTempSelect.removeClass("tone-off");
+    sidebarTempSelect.addClass(isAuthenticated ? "tone-low" : "tone-off");
+    if (isAuthenticated) sidebarTempSelect.removeAttribute("disabled");
+    else sidebarTempSelect.attribute("disabled", "");
+    sidebarTempSelect.style("display", isAuthenticated ? "block" : "none");
+  }
+  if (sidebarAutomationSelect) {
+    sidebarAutomationSelect.value(String(automationIntervalMinutes));
+    sidebarAutomationSelect.removeClass("tone-high");
+    sidebarAutomationSelect.removeClass("tone-mid");
+    sidebarAutomationSelect.removeClass("tone-low");
+    sidebarAutomationSelect.removeClass("tone-off");
+    sidebarAutomationSelect.addClass(isAuthenticated ? (automationIntervalMinutes === 0 ? "tone-high" : "tone-low") : "tone-off");
+    if (isAuthenticated) sidebarAutomationSelect.removeAttribute("disabled");
+    else sidebarAutomationSelect.attribute("disabled", "");
+    sidebarAutomationSelect.style("display", isAuthenticated ? "block" : "none");
+  }
   setPrivilegedControlsVisible(isAuthenticated);
 
   if (sidebarIntervalDiv) {
     sidebarIntervalDiv.html(
       isAuthenticated
-        ? `${selectedPyrId} · ${selectedGptModel}`
+        ? `${selectedPyrId} · ${selectedGptModel} · t${selectedGptTemperature.toFixed(1)}`
         : `${selectedPyrId} · read-only`
     );
   }
@@ -395,7 +475,6 @@ function setPrivilegedControlsVisible(visible) {
     "generate",
     "debugDownloads",
     "autoFix",
-    "automationInterval",
     "automation",
     "remoteAutomation"
   ];
@@ -404,6 +483,8 @@ function setPrivilegedControlsVisible(visible) {
     if (!btn) continue;
     btn.style("display", visible ? "block" : "none");
   }
+  if (sidebarTempSelect) sidebarTempSelect.style("display", visible ? "block" : "none");
+  if (sidebarAutomationSelect) sidebarAutomationSelect.style("display", visible ? "block" : "none");
 }
 
 function automationIntervalLabel() {
@@ -456,6 +537,33 @@ function persistSelectedGptModel() {
   try {
     window.localStorage.setItem(GPT_MODEL_KEY, selectedGptModel);
   } catch (_) {}
+}
+
+function gptTemperatureLabel() {
+  return "Temp: " + selectedGptTemperature.toFixed(1);
+}
+
+function loadSelectedGptTemperature() {
+  try {
+    const saved = Number(window.localStorage.getItem(GPT_TEMPERATURE_KEY));
+    if (GPT_TEMPERATURE_OPTIONS.includes(saved)) return saved;
+  } catch (_) {}
+  return 0.6;
+}
+
+function persistSelectedGptTemperature() {
+  try {
+    window.localStorage.setItem(GPT_TEMPERATURE_KEY, String(selectedGptTemperature));
+  } catch (_) {}
+}
+
+function cycleGptTemperature() {
+  const idx = GPT_TEMPERATURE_OPTIONS.indexOf(selectedGptTemperature);
+  const nextIdx = idx >= 0 ? (idx + 1) % GPT_TEMPERATURE_OPTIONS.length : 0;
+  selectedGptTemperature = GPT_TEMPERATURE_OPTIONS[nextIdx];
+  persistSelectedGptTemperature();
+  logLine("GPT temperature: " + selectedGptTemperature.toFixed(1));
+  syncSidebarControls();
 }
 
 function loadSelectedPyrId() {
@@ -662,6 +770,7 @@ function resetSelectedReflectorState() {
   lastDescription = "";
   lastDesignRationale = "";
   lastLocation = "";
+  resetPyramidMonitorForReflector();
   descriptionDiv.html("");
   if (previewController) previewController.setReflectionText("");
   setEditorValue("");
@@ -681,7 +790,7 @@ function rememberPromptReflection(text) {
   const next = String(text || "").trim();
   if (!next) return;
   if (lastPromptHistory[0] === next) return;
-  lastPromptHistory = [next, ...lastPromptHistory.filter((item) => item !== next)].slice(0, 5);
+  lastPromptHistory = [next, ...lastPromptHistory.filter((item) => item !== next)].slice(0, 20);
 }
 
 function lastPromptHistoryText() {
@@ -693,9 +802,10 @@ function lastPromptHistoryText() {
 function reflectionWithLocation(reflectionText, locationText) {
   const reflection = String(reflectionText || "").trim();
   const location = String(locationText || "").trim();
-  if (!location) return reflection;
-  if (!reflection) return location;
-  return reflection + "\n\n" + location;
+  const prefixedLocation = location ? `${selectedPyrId}: ${location}` : "";
+  if (!prefixedLocation) return reflection;
+  if (!reflection) return prefixedLocation;
+  return reflection + "\n\n" + prefixedLocation;
 }
 
 function currentReflectionPanelText() {
@@ -776,6 +886,191 @@ function createModeToggleButton() {
   modeToggleButton.parent(document.body);
   modeToggleButton.id("mode-toggle");
   modeToggleButton.mousePressed(toggleDisplayMode);
+}
+
+function createInitialPyramidMonitor() {
+  return {
+    lastFpsAt: 0,
+    prevFpsAt: 0,
+    avgFpsIntervalMs: 1000,
+    latestFps: 0,
+    hasEverBeenOnline: false,
+    offlineSince: 0,
+    stats: {
+      wrenchErrors: 0,
+      rssErrors: 0,
+      otherErrors: 0,
+      reboots: 0
+    }
+  };
+}
+
+function loadPreviewIndicatorCompact() {
+  try {
+    return window.localStorage.getItem("dashboard2_preview_indicator_compact") === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function persistPreviewIndicatorCompact() {
+  try {
+    window.localStorage.setItem("dashboard2_preview_indicator_compact", previewIndicatorCompact ? "1" : "0");
+  } catch (_) {}
+}
+
+function togglePreviewIndicatorCompact() {
+  previewIndicatorCompact = !previewIndicatorCompact;
+  persistPreviewIndicatorCompact();
+  updatePyramidMonitorUi();
+}
+
+function notePyramidFpsHeartbeat(fpsValue) {
+  const now = millis();
+  pyramidMonitor.latestFps = Number(fpsValue) || 0;
+  if (pyramidMonitor.lastFpsAt > 0) {
+    const dt = now - pyramidMonitor.lastFpsAt;
+    if (dt > 150 && dt < 300000) {
+      pyramidMonitor.avgFpsIntervalMs = pyramidMonitor.avgFpsIntervalMs * 0.7 + dt * 0.3;
+    }
+  }
+  pyramidMonitor.prevFpsAt = pyramidMonitor.lastFpsAt;
+  pyramidMonitor.lastFpsAt = now;
+  pyramidMonitor.hasEverBeenOnline = true;
+  pyramidMonitor.offlineSince = 0;
+  updatePyramidMonitorUi();
+}
+
+function noteWrenchError() {
+  pyramidMonitor.stats.wrenchErrors += 1;
+  updatePyramidMonitorUi();
+}
+
+function noteRssError() {
+  pyramidMonitor.stats.rssErrors += 1;
+  updatePyramidMonitorUi();
+}
+
+function noteOtherError() {
+  pyramidMonitor.stats.otherErrors += 1;
+  updatePyramidMonitorUi();
+}
+
+function noteReboot() {
+  pyramidMonitor.stats.reboots += 1;
+  updatePyramidMonitorUi();
+}
+
+function resetPyramidMonitorForReflector() {
+  pyramidMonitor = createInitialPyramidMonitor();
+  updatePyramidMonitorUi();
+}
+
+function currentAutomationRemainingMs() {
+  if (!automationEnabled || !automationNextRunAt) return 0;
+  return Math.max(0, automationNextRunAt - Date.now());
+}
+
+function formatRefreshCountdown(ms) {
+  if (!ms || ms <= 0) return "";
+  const totalMinutes = Math.ceil(ms / 60000);
+  if (totalMinutes < 60) {
+    return `${totalMinutes}m`;
+  }
+  const totalHours = Math.floor(totalMinutes / 60);
+  const remMinutes = totalMinutes % 60;
+  return `${totalHours}:${String(remMinutes).padStart(2, "0")}h`;
+}
+
+function currentAutomationProgress() {
+  if (!automationEnabled || !automationNextRunAt) return 0;
+  const totalMs = automationIntervalMinutes * 60 * 1000;
+  if (totalMs <= 0) return 1;
+  const remaining = currentAutomationRemainingMs();
+  return Math.max(0, Math.min(1, 1 - remaining / totalMs));
+}
+
+function getPyramidMonitorState() {
+  const now = millis();
+  const avgIntervalMs = Math.max(5000, pyramidMonitor.avgFpsIntervalMs || 5000);
+  const warnMs = avgIntervalMs * 10;
+  const offlineMs = avgIntervalMs * 20;
+  const ageMs = pyramidMonitor.lastFpsAt ? now - pyramidMonitor.lastFpsAt : Infinity;
+  let state = "unknown";
+
+  if (pyramidMonitor.latestFps > 100 && ageMs <= offlineMs) {
+    state = "purple";
+  } else if (ageMs <= warnMs) {
+    state = "online";
+  } else if (!pyramidMonitor.hasEverBeenOnline || ageMs <= offlineMs) {
+    state = "warning";
+  } else {
+    state = "offline";
+  }
+
+  if (state === "offline" && pyramidMonitor.hasEverBeenOnline && !pyramidMonitor.offlineSince) {
+    pyramidMonitor.offlineSince = now;
+  }
+  if (state !== "offline") {
+    pyramidMonitor.offlineSince = 0;
+  }
+
+  const blinkOffline = state === "offline" &&
+    pyramidMonitor.hasEverBeenOnline &&
+    pyramidMonitor.offlineSince > 0 &&
+    now - pyramidMonitor.offlineSince <= 10 * 60 * 1000;
+
+  return {
+    state,
+    hasEverBeenOnline: pyramidMonitor.hasEverBeenOnline,
+    latestFps: pyramidMonitor.latestFps,
+    avgFpsIntervalMs: avgIntervalMs,
+    warnMs,
+    offlineMs,
+    ageMs,
+    blinkOffline,
+    warningPulse: 0.5 + 0.5 * Math.sin(now * 0.004),
+    blinkOn: Math.floor(now / 500) % 2 === 0,
+    progress: currentAutomationProgress(),
+    countdownLabel: formatRefreshCountdown(currentAutomationRemainingMs()),
+    compact: previewIndicatorCompact,
+    stats: { ...pyramidMonitor.stats }
+  };
+}
+
+function updatePyramidMonitorUi() {
+  const monitor = getPyramidMonitorState();
+  renderDeviceStatus(monitor);
+  renderMetrics();
+  if (previewController) {
+    previewController.setMonitorState(monitor);
+  }
+}
+
+function renderDeviceStatus(monitor = getPyramidMonitorState()) {
+  if (!deviceStatusDiv) return;
+  let label = monitor.hasEverBeenOnline ? "Warning" : "Awaiting";
+  let cls = "is-warning";
+  if (monitor.state === "online") {
+    label = "Online";
+    cls = "is-online";
+  } else if (monitor.state === "purple") {
+    label = "High FPS";
+    cls = "is-purple";
+  } else if (monitor.state === "offline") {
+    label = "Offline";
+    cls = "is-offline";
+  }
+  deviceStatusDiv.html(label);
+  deviceStatusDiv.removeClass("is-online");
+  deviceStatusDiv.removeClass("is-warning");
+  deviceStatusDiv.removeClass("is-offline");
+  deviceStatusDiv.removeClass("is-purple");
+  deviceStatusDiv.removeClass("is-blink");
+  deviceStatusDiv.addClass(cls);
+  if ((monitor.state === "offline" && monitor.blinkOffline) || monitor.state === "purple") {
+    deviceStatusDiv.addClass("is-blink");
+  }
 }
 
 function updateReflectionTypography() {
@@ -1000,6 +1295,7 @@ function connectMQTT() {
   }
 
   const clientId = "portal-dashboard-" + Math.floor(Math.random() * 1e9);
+  mqttDisconnectRequested = false;
   statusText = "Connecting MQTT...";
   logLine("Connecting MQTT as " + clientId + "...");
   syncSidebarControls();
@@ -1037,14 +1333,18 @@ function connectMQTT() {
     isConnected = false;
     statusText = "MQTT closed";
     logLine("MQTT closed.");
-    client = null;
     clearAutomationTimer();
+    if (mqttDisconnectRequested) {
+      client = null;
+      mqttDisconnectRequested = false;
+    }
     syncSidebarControls();
   });
 
   socket.on("error", (err) => {
     if (client !== socket && client !== null) return;
     statusText = "MQTT error";
+    noteOtherError();
     logLine("MQTT error: " + err);
     syncSidebarControls();
   });
@@ -1080,10 +1380,10 @@ function connectMQTT() {
 
 function disconnectMQTT() {
   if (!client) return;
+  mqttDisconnectRequested = true;
   try {
     client.end(true);
   } catch (_) {}
-  client = null;
   isConnected = false;
   statusText = "MQTT not connected";
   clearAutomationTimer();
@@ -1120,16 +1420,21 @@ function clearAutomationTimer() {
     clearTimeout(automationTimerId);
     automationTimerId = null;
   }
+  automationNextRunAt = 0;
   syncSidebarControls();
+  updatePyramidMonitorUi();
 }
 
 function scheduleNextAutomationRun() {
   clearAutomationTimer();
   if (!automationEnabled) return;
   const automationIntervalMs = automationIntervalMinutes * 60 * 1000;
+  automationNextRunAt = Date.now() + automationIntervalMs;
+  updatePyramidMonitorUi();
 
   automationTimerId = setTimeout(() => {
     automationTimerId = null;
+    automationNextRunAt = 0;
     if (!automationEnabled) return;
     if (!client || !isConnected) {
       logLine("Automation skipped: MQTT not connected.");
@@ -1343,6 +1648,7 @@ function applyReflectionMessage(msg) {
     }
     logLine("Loaded retained reflection.");
   } catch (err) {
+    noteOtherError();
     logLine("Reflection parse error: " + (err && err.message ? err.message : err));
   }
 }
@@ -1371,6 +1677,7 @@ function applyCodeStateMessage(msg) {
     updateReflectionTypography();
     logLine("Loaded retained code state.");
   } catch (err) {
+    noteOtherError();
     logLine("Code state parse error: " + (err && err.message ? err.message : err));
   }
 }
@@ -1461,6 +1768,7 @@ function consumeEvtObjectSilently(obj) {
     const val = obj.fps ?? obj.bytes ?? obj.words;
     if (typeof val !== "undefined") {
       deviceMetrics[obj.event] = formatMetricValue(obj.event, val);
+      if (obj.event === "fps") notePyramidFpsHeartbeat(val);
       renderMetrics();
       return true;
     }
@@ -1479,6 +1787,7 @@ function formatEvtObjectForConsole(topic, obj) {
   }
 
   if (obj.ok === false && typeof obj.err === "string") {
+    noteWrenchError();
     const lower = obj.err.toLowerCase();
     if (lower.startsWith("wrench warn:")) {
       return `${topic}: warning: ${obj.err.slice("wrench warn:".length).trim()}`;
@@ -1490,6 +1799,9 @@ function formatEvtObjectForConsole(topic, obj) {
   }
 
   if (obj.ok === true && typeof obj.msg === "string") {
+    if (obj.msg.toLowerCase().includes("reboot")) {
+      noteReboot();
+    }
     return `${topic}: ${obj.msg}`;
   }
 
@@ -1589,6 +1901,7 @@ function cmdRunAndStore() {
 }
 
 function cmdReboot() {
+  noteReboot();
   publishJsonLine({ cmd: "reboot" });
 }
 
@@ -1654,6 +1967,7 @@ async function generateWrenchAndRun() {
       logLine("Automation rescheduled.");
     }
   } catch (err) {
+    noteOtherError();
     logLine("Generate failed: " + (err && err.message ? err.message : err));
     if (automationEnabled) scheduleNextAutomationRun();
   } finally {
@@ -1670,8 +1984,12 @@ async function fetchDocMarkdown() {
   md = injectLastPromptIntoMarkdown(md);
   md = injectReflectorIdIntoMarkdown(md);
   md = injectCurrentTimeDateIntoMarkdown(md);
-  const MAX_CHARS = 24000;
-  return md.length > MAX_CHARS ? md.slice(0, MAX_CHARS) : md;
+  const MAX_CHARS = 40000;
+  if (md.length > MAX_CHARS) {
+    logLine(`Prompt warning: capped at ${MAX_CHARS} chars (from ${md.length}).`);
+    return md.slice(0, MAX_CHARS);
+  }
+  return md;
 }
 
 function injectLastPromptIntoMarkdown(md) {
@@ -1718,25 +2036,19 @@ async function injectNewsIntoMarkdown(md) {
     return md.replace(markerRegex, "").replace(placeholderRegex, "");
   }
 
-  const sections = [];
+  const feedResults = [];
   let successCount = 0;
-  let remainingItems = TOTAL_NEWS_ITEMS;
   for (const feedUrl of feeds) {
-    if (remainingItems <= 0) break;
     logLine("News debug: fetching " + feedUrl);
     try {
       const feedXml = await fetchFeedText(feedUrl);
-      const items = parseRssItems(feedXml, remainingItems);
+      const items = parseRssItems(feedXml, TOTAL_NEWS_ITEMS);
       if (!items.length) continue;
       logLine("News debug [" + feedUrl + "]: " + items[0].title + " | " + items[0].description);
-      const lines = ["## " + feedUrl];
-      for (let i = 0; i < items.length; i++) {
-        lines.push(`${i + 1}. ${items[i].title}\n${items[i].description}`);
-      }
-      sections.push(lines.join("\n\n"));
+      feedResults.push({ feedUrl, items });
       successCount++;
-      remainingItems -= items.length;
     } catch (err) {
+      noteRssError();
       if (err && err.feedXml) {
         maybeDownloadRssFailure(feedUrl, "parse", err.feedXml, err);
       }
@@ -1748,7 +2060,31 @@ async function injectNewsIntoMarkdown(md) {
     throw new Error("No news feeds could be loaded. Skipping ChatGPT generation.");
   }
 
-  return md.replace(markerRegex, "").replace(placeholderRegex, "# News\n\n" + sections.join("\n\n"));
+  const allItems = [];
+  for (const result of feedResults) {
+    for (const item of result.items) {
+      allItems.push({
+        ...item,
+        feedUrl: result.feedUrl
+      });
+    }
+  }
+
+  allItems.sort((a, b) => {
+    const at = Number.isFinite(a.publishedAt) ? a.publishedAt : -Infinity;
+    const bt = Number.isFinite(b.publishedAt) ? b.publishedAt : -Infinity;
+    return bt - at;
+  });
+
+  const selectedItems = allItems.slice(0, TOTAL_NEWS_ITEMS);
+  const sections = ["# News"];
+  for (let i = 0; i < selectedItems.length; i++) {
+    sections.push(
+      `${i + 1}. ${selectedItems[i].title}\n${selectedItems[i].description}\nSource: ${selectedItems[i].feedUrl}`
+    );
+  }
+
+  return md.replace(markerRegex, "").replace(placeholderRegex, sections.join("\n\n"));
 }
 
 function extractNewsFeedUrls(md) {
@@ -1868,8 +2204,18 @@ function parseRssItems(xmlText, maxItems) {
     .slice(0, maxItems)
     .map((item) => ({
       title: cleanNewsText(getXmlNodeText(item, "title") || "Untitled"),
-      description: cleanNewsText(getXmlNodeText(item, "description") || "No description.")
+      description: cleanNewsText(getXmlNodeText(item, "description") || "No description."),
+      publishedAt: parseNewsTimestamp(
+        getXmlNodeText(item, "pubDate") ||
+        getXmlNodeText(item, "published") ||
+        getXmlNodeText(item, "updated")
+      )
     }));
+}
+
+function parseNewsTimestamp(value) {
+  const t = Date.parse(String(value || "").trim());
+  return Number.isFinite(t) ? t : NaN;
 }
 
 function getXmlNodeText(parent, tagName) {
@@ -1976,7 +2322,7 @@ async function openaiGenerateWrenchFromDoc(docMd) {
     ],
     tools,
     tool_choice: { type: "function", function: { name: "generate_wrench" } },
-    temperature: 1.9
+    temperature: selectedGptTemperature
   };
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -2050,6 +2396,7 @@ async function autoFixWrenchAndRun(errText) {
     });
     logLine("Sent run_now with fixed code.");
   } catch (e) {
+    noteOtherError();
     logLine("Auto-fix failed: " + (e && e.message ? e.message : e));
   } finally {
     autoFixInProgress = false;
@@ -2162,8 +2509,13 @@ function setup(){
 function tick(){
   var total = TOTAL_LEDS;
   var i = 0;
+  var m = 0;
   while(i < total){
-    if(i % 10 == 0){
+    m = i;
+    while (m >= 10) {
+      m = m - 10;
+    }
+    if(m == 0){
       leds_set_pixel(i, 255, 0, 0);
     } else {
       leds_set_pixel(i, 0, 0, 0);
@@ -2282,6 +2634,7 @@ function setEditorValue(value) {
 function setupPreview() {
   previewController = new WrenchPreviewController(previewDiv);
   previewController.setReflectionText(reflectionWithLocation(lastDescription, lastLocation) || descriptionDiv?.elt?.textContent || "");
+  previewController.setMonitorState(getPyramidMonitorState());
   refreshPreview();
 }
 
@@ -2308,6 +2661,7 @@ function maybeUpdateMetricsFromConsoleLine(line) {
     const val = obj.fps ?? obj.bytes ?? obj.words;
     if (typeof val === "undefined") return false;
     deviceMetrics[obj.event] = formatMetricValue(obj.event, val);
+    if (obj.event === "fps") notePyramidFpsHeartbeat(val);
     renderMetrics();
     return true;
   } catch (_) {}
@@ -2382,6 +2736,10 @@ class WrenchPreviewController {
 
   setReflectionText(text) {
     this.preview3d.setState({ reflectionText: text || "" });
+  }
+
+  setMonitorState(monitor) {
+    this.preview3d.setState({ monitor });
   }
 
   setSource(source) {
@@ -2461,6 +2819,8 @@ class WrenchPreview3D {
     this.segmentColors = Array.from({ length: 6 }, () => Array.from({ length: PREVIEW_SEGMENTS_PER_TUBE }, () => "#000000"));
     this.error = "";
     this.reflectionText = "";
+    this.monitor = getPyramidMonitorState();
+    this.indicatorBounds = null;
     this.appliedCameraMode = null;
     this.orbitStates = { preview: null, debug: null };
     this.isDragging = false;
@@ -2475,6 +2835,7 @@ class WrenchPreview3D {
     this.overlayGraphics = null;
     this.hostDiv.elt.appendChild(this.webglLayer);
     this.hostDiv.elt.appendChild(this.overlayLayer);
+    this.hostDiv.elt.addEventListener("click", (e) => this.handleHostClick(e));
     this.instance = new p5((p) => this.mountSketch(p), this.webglLayer);
     this.textInstance = new p5((p) => this.mountOverlaySketch(p), this.overlayLayer);
   }
@@ -2723,6 +3084,7 @@ class WrenchPreview3D {
 
       p.push();
       p.image(g, 0, 0, p.width, p.height);
+      this.drawPreviewIndicator(p);
       p.pop();
     };
 
@@ -2749,10 +3111,84 @@ class WrenchPreview3D {
     if (this.overlayGraphics) this.overlayGraphics.resizeCanvas(width, height);
   }
 
-  setState({ segmentColors, error, reflectionText }) {
+  setState({ segmentColors, error, reflectionText, monitor }) {
     if (segmentColors) this.segmentColors = segmentColors;
     if (typeof reflectionText === "string") this.reflectionText = reflectionText;
+    if (monitor) this.monitor = monitor;
     this.error = error || "";
+  }
+
+  handleHostClick(event) {
+    if (displayMode !== "preview" || !this.indicatorBounds) return;
+    const rect = this.hostDiv.elt.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const dx = x - this.indicatorBounds.cx;
+    const dy = y - this.indicatorBounds.cy;
+    if (dx * dx + dy * dy <= this.indicatorBounds.r * this.indicatorBounds.r) {
+      togglePreviewIndicatorCompact();
+      event.stopPropagation();
+    }
+  }
+
+  drawPreviewIndicator(p) {
+    const monitor = this.monitor || getPyramidMonitorState();
+    const compact = !!monitor.compact;
+    const size = compact ? 10 : 100;
+    const cx = compact ? p.width - 16 : p.width - 78;
+    const cy = compact ? 34 : 138;
+    const radius = size * 0.5;
+    this.indicatorBounds = { cx, cy, r: radius + 8 };
+
+    p.push();
+    p.noStroke();
+    if (monitor.state === "online") {
+      p.stroke(245, 238, 224, 220);
+      p.strokeWeight(compact ? 1.5 : 2.5);
+      p.noFill();
+      p.circle(cx, cy, size);
+      p.noStroke();
+      p.fill(245, 238, 224, 170);
+      p.arc(cx, cy, size - 6, size - 6, -p.HALF_PI, -p.HALF_PI + p.TWO_PI * monitor.progress, p.PIE);
+    } else if (monitor.state === "purple") {
+      if (monitor.blinkOn) {
+        p.fill(164, 106, 255, 220);
+        p.circle(cx, cy, size);
+      }
+    } else if (monitor.state === "offline") {
+      const alpha = monitor.blinkOffline ? (monitor.blinkOn ? 235 : 50) : 220;
+      p.fill(220, 42, 42, alpha);
+      p.circle(cx, cy, size);
+    } else {
+      p.fill(232, 182, 52, 90 + 100 * monitor.warningPulse);
+      p.circle(cx, cy, size);
+    }
+
+    if (!compact) {
+      if (monitor.countdownLabel) {
+        p.fill(245, 238, 224, 210);
+        p.textAlign(p.CENTER, p.TOP);
+        p.textSize(14);
+        p.text(monitor.countdownLabel, cx, cy + radius + 10);
+      }
+      const stats = [
+        `W ${monitor.stats.wrenchErrors}`,
+        `R ${monitor.stats.rssErrors}`,
+        `O ${monitor.stats.otherErrors}`,
+        `RB ${monitor.stats.reboots}`
+      ];
+      p.fill(245, 238, 224, 150);
+      p.textAlign(p.LEFT, p.TOP);
+      p.textSize(10);
+      const statsX = cx - radius;
+      let statsY = cy + radius + 30;
+      if (monitor.countdownLabel) statsY += 12;
+      for (const line of stats) {
+        p.text(line, statsX, statsY);
+        statsY += 11;
+      }
+    }
+    p.pop();
   }
 
   drawPyramid(p) {

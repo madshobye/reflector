@@ -125,7 +125,7 @@ function applyReflectionPayload(payload) {
     const data = JSON.parse(payload);
     const reflection = data.reflection || data.description || "No reflection text provided.";
     const location = data.location || "";
-    latestReflection = location ? reflection + "\n\n" + location : reflection;
+    latestReflection = location ? reflection + "\n\n" + PYR_ID + ": " + location : reflection;
     connectionState = "Connected";
   } catch (err) {
     latestReflection = payload;
