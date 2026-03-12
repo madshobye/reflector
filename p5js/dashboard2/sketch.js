@@ -218,6 +218,7 @@ function createSidebarControls() {
     ["runStore", "Run + Store", () => cmdRunAndStore()],
     ["reboot", "Reboot", () => cmdReboot()],
     ["generate", "Generate Wrench", () => generateWrenchAndRun()],
+    ["testRss", "Test RSS", () => testRssFeeds()],
     ["debugDownloads", "Debug: OFF", () => toggleDebugDownloads()],
     ["autoFix", "Auto-fix: OFF", () => {
       autoFixEnabled = !autoFixEnabled;
@@ -377,6 +378,7 @@ function syncSidebarControls() {
   updateSidebarButton("runStore", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "mid" : "off" });
   updateSidebarButton("reboot", { disabled: !isConnected || !isAuthenticated, tone: isConnected && isAuthenticated ? "low" : "off" });
   updateSidebarButton("generate", { disabled: !isConnected || generationInProgress || !isAuthenticated, tone: isConnected && !generationInProgress && isAuthenticated ? "amber" : "off" });
+  updateSidebarButton("testRss", { disabled: generationInProgress, tone: generationInProgress ? "off" : "low" });
   updateSidebarButton("debugDownloads", { label: debugDownloadsEnabled ? "Debug: ON" : "Debug: OFF", disabled: false, tone: debugDownloadsEnabled ? "high" : "low" });
   updateSidebarButton("autoFix", { label: autoFixEnabled ? "Auto-fix: ON" : "Auto-fix: OFF", disabled: !isAuthenticated, tone: autoFixEnabled && isAuthenticated ? "high" : "off" });
   updateSidebarButton("automation", {
@@ -1993,6 +1995,88 @@ async function fetchDocMarkdown() {
   return md;
 }
 
+async function testRssFeeds() {
+  try {
+    logLine("RSS test: fetching design doc (md)...");
+    const res = await fetch(DOC_MD_URL, { method: "GET" });
+    if (!res.ok) throw new Error("Doc fetch failed: HTTP " + res.status);
+    const md = await res.text();
+    const feeds = extractNewsFeedUrls(md);
+    if (!feeds.length) {
+      logLine("RSS test: no feed URLs found.");
+      return;
+    }
+
+    logLine("RSS test: found " + feeds.length + " feed(s).");
+    const allItems = [];
+    let successCount = 0;
+
+    for (const feedUrl of feeds) {
+      logLine("RSS test: fetching " + feedUrl);
+      try {
+        const feedXml = await fetchFeedText(feedUrl, { bypassCache: true });
+        const items = parseRssItems(feedXml, TOTAL_NEWS_ITEMS);
+        if (!items.length) {
+          logLine("RSS test [" + feedUrl + "]: parsed 0 items.");
+          continue;
+        }
+        successCount++;
+        logLine("RSS test [" + feedUrl + "]: parsed " + items.length + " items.");
+        logLine(
+          "RSS test [" +
+            feedUrl +
+            "]: latest: " +
+            items[0].title +
+            " | " +
+            items[0].description +
+            " | publishedAt=" +
+            formatNewsTimestamp(items[0].publishedAt)
+        );
+        for (const item of items) {
+          allItems.push({ ...item, feedUrl });
+        }
+      } catch (err) {
+        noteRssError();
+        if (err && err.feedXml) {
+          maybeDownloadRssFailure(feedUrl, "parse", err.feedXml, err);
+        }
+        logLine("RSS test [" + feedUrl + "]: failed: " + (err && err.message ? err.message : err));
+      }
+    }
+
+    if (!successCount) {
+      logLine("RSS test: no feeds loaded successfully.");
+      return;
+    }
+
+    allItems.sort((a, b) => {
+      const at = Number.isFinite(a.publishedAt) ? a.publishedAt : -Infinity;
+      const bt = Number.isFinite(b.publishedAt) ? b.publishedAt : -Infinity;
+      return bt - at;
+    });
+
+    const selectedItems = allItems.slice(0, TOTAL_NEWS_ITEMS);
+    logLine("RSS test: newest " + selectedItems.length + " total item(s):");
+    for (let i = 0; i < selectedItems.length; i++) {
+      const item = selectedItems[i];
+      logLine(
+        "RSS test " +
+          (i + 1) +
+          ": " +
+          item.title +
+          " | " +
+          item.description +
+          " | publishedAt=" +
+          formatNewsTimestamp(item.publishedAt) +
+          " | Source: " +
+          item.feedUrl
+      );
+    }
+  } catch (err) {
+    logLine("RSS test failed: " + (err && err.message ? err.message : err));
+  }
+}
+
 function injectLastPromptIntoMarkdown(md) {
   if (!md) return md;
   const placeholderRegex = /\\?\[last\\?_prompt\\?\]/i;
@@ -2061,23 +2145,34 @@ async function injectNewsIntoMarkdown(md) {
     throw new Error("No news feeds could be loaded. Skipping ChatGPT generation.");
   }
 
-  const allItems = [];
   for (const result of feedResults) {
-    for (const item of result.items) {
-      allItems.push({
+    result.items.sort((a, b) => {
+      const at = Number.isFinite(a.publishedAt) ? a.publishedAt : -Infinity;
+      const bt = Number.isFinite(b.publishedAt) ? b.publishedAt : -Infinity;
+      return bt - at;
+    });
+  }
+
+  const selectedItems = [];
+  const baseShare = Math.floor(TOTAL_NEWS_ITEMS / feedResults.length);
+  let remainder = TOTAL_NEWS_ITEMS % feedResults.length;
+
+  for (const result of feedResults) {
+    const takeCount = baseShare + (remainder > 0 ? 1 : 0);
+    if (remainder > 0) remainder--;
+    for (const item of result.items.slice(0, takeCount)) {
+      selectedItems.push({
         ...item,
         feedUrl: result.feedUrl
       });
     }
   }
 
-  allItems.sort((a, b) => {
+  selectedItems.sort((a, b) => {
     const at = Number.isFinite(a.publishedAt) ? a.publishedAt : -Infinity;
     const bt = Number.isFinite(b.publishedAt) ? b.publishedAt : -Infinity;
     return bt - at;
   });
-
-  const selectedItems = allItems.slice(0, TOTAL_NEWS_ITEMS);
   const sections = ["# News"];
   for (let i = 0; i < selectedItems.length; i++) {
     sections.push(
@@ -2119,14 +2214,23 @@ function extractUrlFromMarkdownLine(line) {
   return plainUrlMatch ? plainUrlMatch[0].trim() : "";
 }
 
-async function fetchFeedText(url) {
-  const cached = getCachedFeedText(url);
+async function fetchFeedText(url, options = {}) {
+  const bypassCache = !!options.bypassCache;
+  const cached = bypassCache ? "" : getCachedFeedText(url);
   if (cached) {
     logLine("News debug: cache hit " + url);
     return cached;
   }
+  if (bypassCache) {
+    logLine("News debug: cache bypass " + url);
+  }
 
   const attempts = [
+    {
+      label: "corsproxy",
+      requestUrl: "https://corsproxy.io/?url=" + encodeURIComponent(url),
+      parse: async (res) => await res.text()
+    },
     {
       label: "allorigins-get",
       requestUrl: "https://api.allorigins.win/get?url=" + encodeURIComponent(url),
@@ -2134,11 +2238,6 @@ async function fetchFeedText(url) {
         const data = await res.json();
         return data && data.contents ? data.contents : "";
       }
-    },
-    {
-      label: "corsproxy",
-      requestUrl: "https://corsproxy.io/?" + encodeURIComponent(url),
-      parse: async (res) => await res.text()
     },
     {
       label: "allorigins-raw",
@@ -2150,13 +2249,19 @@ async function fetchFeedText(url) {
   let lastErr = null;
   for (const attempt of attempts) {
     try {
+      logLine(`News debug [${url}]: trying ${attempt.label}`);
       const res = await fetch(attempt.requestUrl, { method: "GET" });
       if (!res.ok) throw new Error("HTTP " + res.status);
       const text = await attempt.parse(res);
       if (!text) throw new Error("Empty response");
+      logLine(`News debug [${url}]: success via ${attempt.label} (${text.length} chars)`);
       setCachedFeedText(url, text);
       return text;
     } catch (err) {
+      const detail =
+        err && err.message ? err.message :
+        (typeof err === "string" ? err : JSON.stringify(err));
+      logLine(`News debug [${url}]: ${attempt.label} failed: ${detail}`);
       lastErr = err;
     }
   }
@@ -2217,6 +2322,15 @@ function parseRssItems(xmlText, maxItems) {
 function parseNewsTimestamp(value) {
   const t = Date.parse(String(value || "").trim());
   return Number.isFinite(t) ? t : NaN;
+}
+
+function formatNewsTimestamp(value) {
+  if (!Number.isFinite(value)) return "invalid";
+  try {
+    return new Date(value).toISOString();
+  } catch (_) {
+    return String(value);
+  }
 }
 
 function getXmlNodeText(parent, tagName) {
