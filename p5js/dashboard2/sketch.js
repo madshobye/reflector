@@ -19,7 +19,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v63";
+const DASHBOARD2_VERSION = "v75";
 const TOTAL_NEWS_ITEMS = 20;
 const RSS_CACHE_TTL_MS = 20 * 60 * 1000;
 const DOC_MD_URL =
@@ -909,6 +909,14 @@ function applyDisplayMode() {
   if (typeof document === "undefined") return;
   document.body.classList.toggle("preview-mode", displayMode === "preview");
   document.body.classList.toggle("debug-mode", displayMode === "debug");
+  if (editorColumnEl) editorColumnEl.style("display", displayMode === "preview" ? "flex" : "flex");
+  if (infoColumnEl) infoColumnEl.style("display", displayMode === "preview" ? "none" : "flex");
+  if (monitorSectionEl) monitorSectionEl.style("display", displayMode === "preview" ? "none" : "flex");
+  if (emptySectionEl) emptySectionEl.style("display", "flex");
+  if (reflectionSectionEl) reflectionSectionEl.style("display", displayMode === "preview" ? "none" : "flex");
+  if (metricsSectionEl) metricsSectionEl.style("display", displayMode === "preview" ? "none" : "flex");
+  if (editorSectionEl) editorSectionEl.style("display", displayMode === "preview" ? "none" : "flex");
+  if (consoleSectionEl) consoleSectionEl.style("display", displayMode === "preview" ? "none" : "flex");
   if (modeToggleButton) {
     modeToggleButton.html(displayMode === "preview" ? "Debug" : "Preview");
   }
@@ -2813,13 +2821,14 @@ function createLayout() {
   infoColumnEl.class("content-column");
   infoColumnEl.parent(contentEl);
 
-  emptySectionEl = createSection(editorColumnEl, "editor", "Preview");
-  reflectionSectionEl = createSection(editorColumnEl, "console", "Reflection");
-  monitorSectionEl = createSection(infoColumnEl, "third", "Status");
-  metricsSectionEl = createSection(infoColumnEl, "third", "Device Info");
-  editorSectionEl = createSection(infoColumnEl, "third", "Wrench Code");
-  consoleSectionEl = createSection(infoColumnEl, "third", "Console");
+  emptySectionEl = createSection(editorColumnEl, "", "Preview");
+  reflectionSectionEl = createSection(editorColumnEl, "", "Reflection");
+  monitorSectionEl = createSection(infoColumnEl, "", "Status");
+  metricsSectionEl = createSection(infoColumnEl, "", "Device Info");
+  editorSectionEl = createSection(infoColumnEl, "", "Wrench Code");
+  consoleSectionEl = createSection(infoColumnEl, "", "Console");
   consoleSectionEl.addClass("console-section");
+  editorSectionEl.addClass("code-section");
   reflectionSectionEl.addClass("reflection-section");
   monitorSectionEl.addClass("monitor-section");
   metricsSectionEl.addClass("device-info");
@@ -2882,7 +2891,7 @@ function setEditorValue(value) {
 
 function setupPreview() {
   previewController = new WrenchPreviewController(previewDiv);
-  previewController.setReflectionText(reflectionWithLocation(lastDescription, lastLocation) || descriptionDiv?.elt?.textContent || "");
+  previewController.setReflectionText(reflectionWithLocation(lastDescription, lastLocation));
   previewController.setMonitorState(getPyramidMonitorState());
   refreshPreview();
 }
@@ -3458,14 +3467,20 @@ class WrenchPreview3D {
     ];
 
     p.push();
-    p.translate(displayMode === "preview" ? (narrow ? 0 : 125) : 48, 0, 0);
+    const previewOffsetX = this.getPreviewWorldOffsetX(p, narrow);
+    p.translate(displayMode === "preview" ? previewOffsetX : 48, 0, 0);
     for (const tube of tubes) {
       this.drawSegmentedCylinder(p, tube.from, tube.to, tube.colors);
     }
     p.pop();
   }
 
+  getPreviewWorldOffsetX(p, narrow = this.isNarrowScreen()) {
+    return narrow ? 0 : -p.width * 0.06;
+  }
+
   drawGroundPlane(p) {
+    const narrow = this.isNarrowScreen();
     const a = [-95, 40, -55];
     const b = [95, 40, -55];
     const c = [0, -70, 85];
@@ -3508,6 +3523,9 @@ class WrenchPreview3D {
     ];
 
     p.push();
+    if (displayMode === "preview") {
+      p.translate(this.getPreviewWorldOffsetX(p, narrow), 0, 0);
+    }
     p.noStroke();
     p.fill(18, 18, 18);
     p.beginShape();

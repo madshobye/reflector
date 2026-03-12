@@ -164,18 +164,6 @@ body.preview-mode {
   min-height: 0;
 }
 
-.panel-section.editor {
-  flex: 1 1 66%;
-}
-
-.panel-section.console {
-  flex: 1 1 34%;
-}
-
-.panel-section.third {
-  flex: 1 1 33.33%;
-}
-
 .panel-section.monitor-section {
   flex: 0.44 1 14%;
 }
@@ -183,6 +171,18 @@ body.preview-mode {
 .panel-section.device-info {
   flex: 0.62 1 19%;
   position: relative;
+}
+
+.panel-section.code-section {
+  flex: 1 1 33.33%;
+}
+
+.panel-section.console-section {
+  flex: 1 1 33.33%;
+}
+
+.panel-section.reflection-section {
+  flex: 1 1 34%;
 }
 
 .panel-section.preview-section {
@@ -519,14 +519,14 @@ body.preview-mode #content-panel {
 }
 
 body.preview-mode #editor-column {
-  display: none;
-}
-
-body.preview-mode #info-column {
   flex: 1 1 auto;
   position: relative;
   padding: 0;
   gap: 0;
+}
+
+body.preview-mode #info-column {
+  display: none;
 }
 
 body.preview-mode .panel-title {
@@ -537,6 +537,10 @@ body.preview-mode .panel-section.device-info {
   display: none;
 }
 
+body.preview-mode .panel-section.monitor-section {
+  display: none;
+}
+
 body.preview-mode .panel-section.preview-section {
   position: absolute;
   inset: 0;
@@ -544,6 +548,11 @@ body.preview-mode .panel-section.preview-section {
 }
 
 body.preview-mode .panel-section.reflection-section {
+  display: none;
+}
+
+body.preview-mode .panel-section.code-section,
+body.preview-mode .panel-section.console-section {
   display: none;
 }
 
@@ -616,10 +625,11 @@ body.preview-mode #mode-toggle {
     flex: 1 1 auto;
   }
 
-  .panel-section.editor,
-  .panel-section.console,
-  .panel-section.third,
+  .panel-section.code-section,
+  .panel-section.console-section,
+  .panel-section.reflection-section,
   .panel-section.device-info,
+  .panel-section.monitor-section,
   .panel-section.preview-section {
     flex: 1 1 auto;
     min-height: 180px;
