@@ -19,7 +19,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v75";
+const DASHBOARD2_VERSION = "v81";
 const TOTAL_NEWS_ITEMS = 20;
 const RSS_CACHE_TTL_MS = 20 * 60 * 1000;
 const DOC_MD_URL =
@@ -65,9 +65,8 @@ let editorEl;
 let aceEditor = null;
 let consoleDiv;
 let descriptionDiv;
-let reflectionToggleWrap = null;
-let reflectionTextToggleButton = null;
-let reflectionRationaleToggleButton = null;
+let rationaleDiv;
+let reflectionColumnsWrap = null;
 let metricsDiv;
 let deviceStatusDiv;
 let monitorDiv;
@@ -115,7 +114,6 @@ let sidebarReflectionLink = null;
 let sidebarPromptLink = null;
 let sidebarButtons = {};
 let sidebarSyncTimer = null;
-let reflectionPanelMode = "reflection";
 let automationNextRunAt = 0;
 let previewIndicatorCompact = loadPreviewIndicatorCompact();
 let pyramidMonitor = createInitialPyramidMonitor();
@@ -161,28 +159,43 @@ function createDomPanels() {
   editorEl.id("editor");
   editorEl.class("panel-box");
 
-  reflectionToggleWrap = createDiv("");
-  reflectionToggleWrap.parent(reflectionSectionEl);
-  reflectionToggleWrap.class("reflection-toggle-wrap");
+  reflectionColumnsWrap = createDiv("");
+  reflectionColumnsWrap.parent(reflectionSectionEl);
+  reflectionColumnsWrap.class("reflection-columns");
 
-  reflectionTextToggleButton = createButton("Reflection");
-  reflectionTextToggleButton.parent(reflectionToggleWrap);
-  reflectionTextToggleButton.class("reflection-toggle is-active");
-  reflectionTextToggleButton.mousePressed(() => setReflectionPanelMode("reflection"));
+  const reflectionWrap = createDiv("");
+  reflectionWrap.parent(reflectionColumnsWrap);
+  reflectionWrap.class("rationale-column");
 
-  reflectionRationaleToggleButton = createButton("Rationale");
-  reflectionRationaleToggleButton.parent(reflectionToggleWrap);
-  reflectionRationaleToggleButton.class("reflection-toggle");
-  reflectionRationaleToggleButton.mousePressed(() => setReflectionPanelMode("rationale"));
+  const reflectionTitle = createDiv("Reflection");
+  reflectionTitle.parent(reflectionWrap);
+  reflectionTitle.class("mini-panel-title");
 
   descriptionDiv = createDiv("");
-  descriptionDiv.parent(reflectionSectionEl);
+  descriptionDiv.parent(reflectionWrap);
   descriptionDiv.class("panel-box");
   styleLogPanel(descriptionDiv, "#000000");
-  descriptionDiv.style("font-size", "21px");
-  descriptionDiv.style("line-height", "1.7");
-  descriptionDiv.style("font-family", "\"IBM Plex Sans\", sans-serif");
+  descriptionDiv.style("font-size", "17px");
+  descriptionDiv.style("line-height", "1.55");
+  descriptionDiv.style("font-family", "Georgia, Times New Roman, serif");
   descriptionDiv.style("font-weight", "400");
+
+  const rationaleWrap = createDiv("");
+  rationaleWrap.parent(reflectionColumnsWrap);
+  rationaleWrap.class("rationale-column");
+
+  const rationaleTitle = createDiv("Rationale");
+  rationaleTitle.parent(rationaleWrap);
+  rationaleTitle.class("mini-panel-title");
+
+  rationaleDiv = createDiv("");
+  rationaleDiv.parent(rationaleWrap);
+  rationaleDiv.class("panel-box");
+  styleLogPanel(rationaleDiv, "#000000");
+  rationaleDiv.style("font-size", "17px");
+  rationaleDiv.style("line-height", "1.55");
+  rationaleDiv.style("font-family", "Georgia, Times New Roman, serif");
+  rationaleDiv.style("font-weight", "400");
 
   monitorDiv = createDiv("");
   monitorDiv.parent(monitorSectionEl);
@@ -843,25 +856,15 @@ function reflectionWithLocation(reflectionText, locationText) {
 }
 
 function currentReflectionPanelText() {
-  if (reflectionPanelMode === "rationale") return lastDesignRationale || "";
   return reflectionWithLocation(lastDescription, lastLocation);
 }
 
 function setReflectionPanelText() {
   if (!descriptionDiv || !descriptionDiv.elt) return;
   descriptionDiv.elt.textContent = currentReflectionPanelText();
-}
-
-function setReflectionPanelMode(nextMode) {
-  reflectionPanelMode = nextMode === "rationale" ? "rationale" : "reflection";
-  if (reflectionTextToggleButton) {
-    reflectionTextToggleButton.toggleClass("is-active", reflectionPanelMode === "reflection");
+  if (rationaleDiv && rationaleDiv.elt) {
+    rationaleDiv.elt.textContent = lastDesignRationale || "";
   }
-  if (reflectionRationaleToggleButton) {
-    reflectionRationaleToggleButton.toggleClass("is-active", reflectionPanelMode === "rationale");
-  }
-  setReflectionPanelText();
-  updateReflectionTypography();
 }
 
 function requestSelectedReflectorCode() {
@@ -2840,6 +2843,10 @@ function syncSectionTitles() {
   const previewTitle = emptySectionEl?.elt?.querySelector(".panel-title");
   if (previewTitle) {
     previewTitle.textContent = "Preview " + selectedPyrId;
+  }
+  const reflectionTitle = reflectionSectionEl?.elt?.querySelector(":scope > .panel-title");
+  if (reflectionTitle) {
+    reflectionTitle.style.display = "none";
   }
 }
 

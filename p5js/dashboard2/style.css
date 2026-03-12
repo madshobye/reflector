@@ -250,6 +250,33 @@ body.preview-mode {
   margin: 0 0 8px;
 }
 
+.reflection-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.rationale-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.mini-panel-title {
+  margin: 16px 0 8px;
+  color: var(--amber);
+  font-size: 10px;
+  line-height: 1.2;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.reflection-columns .panel-box {
+  min-height: 0;
+}
+
 .monitor-box {
   display: flex;
   flex-direction: column;
