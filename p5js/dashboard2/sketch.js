@@ -19,7 +19,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v81";
+const DASHBOARD2_VERSION = "v82";
 const TOTAL_NEWS_ITEMS = 20;
 const RSS_CACHE_TTL_MS = 20 * 60 * 1000;
 const DOC_MD_URL =
@@ -955,9 +955,11 @@ function createInitialPyramidMonitor() {
 
 function loadPreviewIndicatorCompact() {
   try {
-    return window.localStorage.getItem("dashboard2_preview_indicator_compact") === "1";
+    const saved = window.localStorage.getItem("dashboard2_preview_indicator_compact");
+    if (saved === null) return true;
+    return saved === "1";
   } catch (_) {
-    return false;
+    return true;
   }
 }
 
