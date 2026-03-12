@@ -19,7 +19,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v82";
+const DASHBOARD2_VERSION = "v85";
 const TOTAL_NEWS_ITEMS = 20;
 const RSS_CACHE_TTL_MS = 20 * 60 * 1000;
 const DOC_MD_URL =
@@ -52,8 +52,10 @@ const dashboardInstanceId = "dashboard2-" + Math.floor(Math.random() * 1e9) + "-
 
 let OPENAI_API_KEY = "";
 let mqttKey = "";
+let x2uProxyKey = "";
 let apiKeyEncryptedGpt ="U2FsdGVkX18009lW4clpttBLCMAsuBYgQZRiEWcsqhqoPwnEL0ka5JbJOwVlkKco88ToU9L42cPy5j++dtaCm1KgO8vV/dMe6bpMDrWs0IXjElBPml1tj8jUIj+oeLXzZuMTtYgGQfyPW+PxU+VtINE4kAvccUD2vXYgym3SYYUm0rD2RNguEmSzU+660DXYPix5qEnRFAHRUSnDdISYulwc8WNBF3gUQl1VEpUg7Ku9G2gCG6dTZ/JoJ6ZELr8W"
 let mqttKeyEncrypted = "U2FsdGVkX1+f60bzOgPSBUTFJpFtLdWNgjs5QTNiW9BsDukPIRX8VtphcNDQ/bqS";
+let x2uProxyKeyEncrypted ="U2FsdGVkX1+UR3EYGI3VO+ByN2s7rpF34hBayne07fE=";
 
 let client = null;
 let isConnected = false;
@@ -642,16 +644,23 @@ function syncReflectorUrl() {
 function initializeAuthState() {
   OPENAI_API_KEY = "";
   mqttKey = "";
+  x2uProxyKey = "";
   isAuthenticated = false;
   try {
     const mqttPassword = getKey("mqttKeyEncrypted");
     const gptPassword = getKey("apiKeyEncryptedGpt");
+    const x2uPassword = getKey("x2uProxyKeyEncrypted");
     if (!mqttPassword || !gptPassword) return;
     const nextMqttKey = decryptKey(mqttKeyEncrypted, mqttPassword);
     const nextOpenAiKey = decryptKey(apiKeyEncryptedGpt, gptPassword);
+    const nextX2uKey =
+      x2uProxyKeyEncrypted && x2uPassword
+        ? decryptKey(x2uProxyKeyEncrypted, x2uPassword)
+        : "";
     if (!nextMqttKey || !nextOpenAiKey) return;
     mqttKey = nextMqttKey;
     OPENAI_API_KEY = nextOpenAiKey;
+    x2uProxyKey = nextX2uKey || "";
     isAuthenticated = true;
   } catch (_) {}
 }
@@ -660,6 +669,7 @@ function clearStoredAuthPasswords() {
   try {
     window.localStorage.removeItem("mqttKeyEncrypted");
     window.localStorage.removeItem("apiKeyEncryptedGpt");
+    window.localStorage.removeItem("x2uProxyKeyEncrypted");
   } catch (_) {}
 }
 
@@ -684,8 +694,10 @@ function bootstrapEncryptedSecret(secretName) {
 function loginAuthenticatedMode() {
   let mqttPassword = "";
   let gptPassword = "";
+  let x2uPassword = "";
   let nextMqttKey = "";
   let nextOpenAiKey = "";
+  let nextX2uKey = "";
 
   if (!mqttKeyEncrypted) {
     const boot = bootstrapEncryptedSecret("mqttKeyEncrypted");
@@ -711,15 +723,29 @@ function loginAuthenticatedMode() {
     nextOpenAiKey = decryptKey(apiKeyEncryptedGpt, gptPassword);
   }
 
-  if (!nextMqttKey || !nextOpenAiKey) {
+  if (!x2uProxyKeyEncrypted) {
+    const boot = bootstrapEncryptedSecret("x2uProxyKeyEncrypted");
+    if (!boot) return;
+    x2uProxyKeyEncrypted = boot.encryptedText;
+    x2uPassword = boot.password;
+    nextX2uKey = boot.rawKey;
+  } else {
+    x2uPassword = window.prompt("Please enter RSS proxy password (x2uProxyKeyEncrypted):", "");
+    if (!x2uPassword) return;
+    nextX2uKey = decryptKey(x2uProxyKeyEncrypted, x2uPassword);
+  }
+
+  if (!nextMqttKey || !nextOpenAiKey || !nextX2uKey) {
     logLine("Login failed: invalid password.");
     return;
   }
 
   storeKey("mqttKeyEncrypted", mqttPassword);
   storeKey("apiKeyEncryptedGpt", gptPassword);
+  storeKey("x2uProxyKeyEncrypted", x2uPassword);
   mqttKey = nextMqttKey;
   OPENAI_API_KEY = nextOpenAiKey;
+  x2uProxyKey = nextX2uKey;
   isAuthenticated = true;
   logLine("Authenticated mode enabled.");
   reconnectForCurrentAuthMode();
@@ -730,6 +756,7 @@ function logoutAuthenticatedMode() {
   clearStoredAuthPasswords();
   OPENAI_API_KEY = "";
   mqttKey = "";
+  x2uProxyKey = "";
   isAuthenticated = false;
   autoFixEnabled = false;
   automationEnabled = false;
@@ -2144,7 +2171,7 @@ async function testRssFeeds() {
     }
 
     logLine("RSS test: found " + feeds.length + " feed(s).");
-    const allItems = [];
+    const feedResults = [];
     let successCount = 0;
 
     for (const feedUrl of feeds) {
@@ -2168,9 +2195,7 @@ async function testRssFeeds() {
             " | publishedAt=" +
             formatNewsTimestamp(items[0].publishedAt)
         );
-        for (const item of items) {
-          allItems.push({ ...item, feedUrl });
-        }
+        feedResults.push({ feedUrl, items });
       } catch (err) {
         noteRssError();
         if (err && err.feedXml) {
@@ -2185,14 +2210,8 @@ async function testRssFeeds() {
       return;
     }
 
-    allItems.sort((a, b) => {
-      const at = Number.isFinite(a.publishedAt) ? a.publishedAt : -Infinity;
-      const bt = Number.isFinite(b.publishedAt) ? b.publishedAt : -Infinity;
-      return bt - at;
-    });
-
-    const selectedItems = allItems.slice(0, TOTAL_NEWS_ITEMS);
-    logLine("RSS test: newest " + selectedItems.length + " total item(s):");
+    const selectedItems = selectBalancedNewsItems(feedResults, TOTAL_NEWS_ITEMS);
+    logLine("RSS test: balanced newest " + selectedItems.length + " total item(s):");
     for (let i = 0; i < selectedItems.length; i++) {
       const item = selectedItems[i];
       logLine(
@@ -2281,34 +2300,7 @@ async function injectNewsIntoMarkdown(md) {
     throw new Error("No news feeds could be loaded. Skipping ChatGPT generation.");
   }
 
-  for (const result of feedResults) {
-    result.items.sort((a, b) => {
-      const at = Number.isFinite(a.publishedAt) ? a.publishedAt : -Infinity;
-      const bt = Number.isFinite(b.publishedAt) ? b.publishedAt : -Infinity;
-      return bt - at;
-    });
-  }
-
-  const selectedItems = [];
-  const baseShare = Math.floor(TOTAL_NEWS_ITEMS / feedResults.length);
-  let remainder = TOTAL_NEWS_ITEMS % feedResults.length;
-
-  for (const result of feedResults) {
-    const takeCount = baseShare + (remainder > 0 ? 1 : 0);
-    if (remainder > 0) remainder--;
-    for (const item of result.items.slice(0, takeCount)) {
-      selectedItems.push({
-        ...item,
-        feedUrl: result.feedUrl
-      });
-    }
-  }
-
-  selectedItems.sort((a, b) => {
-    const at = Number.isFinite(a.publishedAt) ? a.publishedAt : -Infinity;
-    const bt = Number.isFinite(b.publishedAt) ? b.publishedAt : -Infinity;
-    return bt - at;
-  });
+  const selectedItems = selectBalancedNewsItems(feedResults, TOTAL_NEWS_ITEMS);
   const sections = ["# News"];
   for (let i = 0; i < selectedItems.length; i++) {
     sections.push(
@@ -2317,6 +2309,47 @@ async function injectNewsIntoMarkdown(md) {
   }
 
   return md.replace(markerRegex, "").replace(placeholderRegex, sections.join("\n\n"));
+}
+
+function sortNewsItemsNewestFirst(items) {
+  return [...items].sort((a, b) => {
+    const at = Number.isFinite(a.publishedAt) ? a.publishedAt : -Infinity;
+    const bt = Number.isFinite(b.publishedAt) ? b.publishedAt : -Infinity;
+    return bt - at;
+  });
+}
+
+function selectBalancedNewsItems(feedResults, totalCount) {
+  if (!feedResults.length || totalCount <= 0) return [];
+  const sortedFeeds = feedResults.map((result) => ({
+    feedUrl: result.feedUrl,
+    items: sortNewsItemsNewestFirst(result.items).map((item) => ({ ...item, feedUrl: result.feedUrl }))
+  }));
+
+  const selectedByFeed = sortedFeeds.map((result) => []);
+  const baseShare = Math.floor(totalCount / sortedFeeds.length);
+  let remainder = totalCount % sortedFeeds.length;
+
+  for (let i = 0; i < sortedFeeds.length; i++) {
+    const takeCount = baseShare + (remainder > 0 ? 1 : 0);
+    if (remainder > 0) remainder--;
+    selectedByFeed[i] = sortedFeeds[i].items.slice(0, takeCount);
+  }
+
+  const merged = [];
+  let cursor = 0;
+  let added = true;
+  while (merged.length < totalCount && added) {
+    added = false;
+    for (const items of selectedByFeed) {
+      if (cursor < items.length && merged.length < totalCount) {
+        merged.push(items[cursor]);
+        added = true;
+      }
+    }
+    cursor++;
+  }
+  return merged;
 }
 
 function extractNewsFeedUrls(md) {
@@ -2362,9 +2395,18 @@ async function fetchFeedText(url, options = {}) {
   }
 
   const attempts = [
+    ...(x2uProxyKey ? [{
+      label: "x2u",
+      requestUrl:
+        "https://go.x2u.in/proxy?email=corss@hobye.dk&apiKey=" +
+        encodeURIComponent(x2uProxyKey) +
+        "&url=" +
+        encodeURIComponent(url),
+      parse: async (res) => await res.text()
+    }] : []),
     {
-      label: "corsproxy",
-      requestUrl: "https://corsproxy.io/?url=" + encodeURIComponent(url),
+      label: "codetabs",
+      requestUrl: "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url),
       parse: async (res) => await res.text()
     },
     {
