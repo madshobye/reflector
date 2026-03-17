@@ -19,7 +19,7 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v85";
+const DASHBOARD2_VERSION = "v92";
 const TOTAL_NEWS_ITEMS = 20;
 const RSS_CACHE_TTL_MS = 20 * 60 * 1000;
 const DOC_MD_URL =
@@ -3016,7 +3016,7 @@ const PREVIEW_TUBE_ENDPOINTS = [
   [{ x: 0.0, y: -24.699, z: 99.737 }, { x: 0.0, y: 102.266, z: 9.959 }]
 ];
 const TOTAL_PREVIEW_LEDS = 5352;
-const PREVIEW_SEGMENTS_PER_TUBE = 200;
+const PREVIEW_SEGMENTS_PER_TUBE = 223;
 
 function createBuiltinPreviewPalettes() {
   return {
@@ -3905,20 +3905,36 @@ class WrenchPreviewRuntime {
   }
 
   sdf_palette_hsv3(id, h1, s1, v1, h2, s2, v2, h3, s3, v3) {
-    this.palettes[id] = [
+    if (!this.shapes[id]) {
+      this.shapes[id] = { idx: clampIndex(id, Math.max(this.shapes.length || 1, clampIndex(id, 9999) + 1)) };
+    }
+    this.shapes[id].dynamicPalette = [
       hsvToRgb(h1, s1, v1),
       hsvToRgb(h2, s2, v2),
       hsvToRgb(h3, s3, v3)
     ];
+    this.shapes[id].paletteMix = typeof arguments[10] === "undefined" ? 255 : Number(arguments[10]) || 0;
+    this.shapes[id].paletteScroll = typeof arguments[11] === "undefined" ? 0 : Number(arguments[11]) || 0;
+    this.shapes[id].paletteBright = typeof arguments[12] === "undefined" ? 255 : Number(arguments[12]) || 0;
+    this.shapes[id].paletteBlend = typeof arguments[13] === "undefined" ? 1 : Number(arguments[13]) || 0;
+    this.shapes[id].dynamicPaletteMid = typeof arguments[14] === "undefined" ? 115 / 255 : Math.max(0, Math.min(1, (Number(arguments[14]) || 0) / 255));
     return 0;
   }
 
   sdf_palette_rgb3(id, r1, g1, b1, r2, g2, b2, r3, g3, b3) {
-    this.palettes[id] = [
+    if (!this.shapes[id]) {
+      this.shapes[id] = { idx: clampIndex(id, Math.max(this.shapes.length || 1, clampIndex(id, 9999) + 1)) };
+    }
+    this.shapes[id].dynamicPalette = [
       { r: Number(r1) || 0, g: Number(g1) || 0, b: Number(b1) || 0 },
       { r: Number(r2) || 0, g: Number(g2) || 0, b: Number(b2) || 0 },
       { r: Number(r3) || 0, g: Number(g3) || 0, b: Number(b3) || 0 }
     ];
+    this.shapes[id].paletteMix = typeof arguments[10] === "undefined" ? 255 : Number(arguments[10]) || 0;
+    this.shapes[id].paletteScroll = typeof arguments[11] === "undefined" ? 0 : Number(arguments[11]) || 0;
+    this.shapes[id].paletteBright = typeof arguments[12] === "undefined" ? 255 : Number(arguments[12]) || 0;
+    this.shapes[id].paletteBlend = typeof arguments[13] === "undefined" ? 1 : Number(arguments[13]) || 0;
+    this.shapes[id].dynamicPaletteMid = typeof arguments[14] === "undefined" ? 115 / 255 : Math.max(0, Math.min(1, (Number(arguments[14]) || 0) / 255));
     return 0;
   }
 
@@ -3935,6 +3951,8 @@ class WrenchPreviewRuntime {
       color: hsvToRgb(hue, sat, val),
       alpha: Number(alpha) || 0.6,
       bias: Number(arguments[9]) || 0.5,
+      dynamicPalette: prev.dynamicPalette || null,
+      dynamicPaletteMid: typeof prev.dynamicPaletteMid === "undefined" ? (115 / 255) : prev.dynamicPaletteMid,
       paletteId: typeof prev.paletteId === "undefined" ? null : prev.paletteId,
       paletteMix: typeof prev.paletteMix === "undefined" ? 255 : prev.paletteMix,
       paletteScroll: typeof prev.paletteScroll === "undefined" ? 0 : prev.paletteScroll,
@@ -3961,6 +3979,8 @@ class WrenchPreviewRuntime {
       alpha: Number(alpha) || 0.6,
       bias: Number(arguments[10]) || 0.5,
       power: Number(arguments[11]) || 2,
+      dynamicPalette: prev.dynamicPalette || null,
+      dynamicPaletteMid: typeof prev.dynamicPaletteMid === "undefined" ? (115 / 255) : prev.dynamicPaletteMid,
       paletteId: typeof prev.paletteId === "undefined" ? null : prev.paletteId,
       paletteMix: typeof prev.paletteMix === "undefined" ? 255 : prev.paletteMix,
       paletteScroll: typeof prev.paletteScroll === "undefined" ? 0 : prev.paletteScroll,
@@ -3997,7 +4017,7 @@ class WrenchPreviewRuntime {
     if (!this.shapes[i]) {
       this.shapes[i] = { idx: clampIndex(i, Math.max(this.shapes.length || 1, clampIndex(i, 9999) + 1)) };
     }
-    this.shapes[i].paletteId = paletteId;
+    this.shapes[i].paletteId = clampIndex(paletteId, 7);
     this.shapes[i].paletteMix = Number(mix) || 0;
     this.shapes[i].paletteScroll = Number(scroll) || 0;
     this.shapes[i].paletteBright = typeof bright === "undefined" ? 255 : Number(bright) || 0;
@@ -4152,18 +4172,17 @@ class WrenchPreviewRuntime {
       if (this.directTubeTouched[t]) continue;
 
       let accum = { r: 0, g: 0, b: 0 };
-      for (let s = 0; s < 12; s++) {
-        const u = s / 11;
-        const p = this.samplePoint(t, u);
+      for (let led = 0; led < PREVIEW_SEGMENTS_PER_TUBE; led++) {
+        const p = this.sampleTubeLedPoint(t, led);
         const c = this.sampleSceneAt(p.x, p.y, p.z);
         accum.r += c.r;
         accum.g += c.g;
         accum.b += c.b;
       }
       this.tubeColors[t] = applyBrightness({
-        r: accum.r / 12,
-        g: accum.g / 12,
-        b: accum.b / 12
+        r: accum.r / PREVIEW_SEGMENTS_PER_TUBE,
+        g: accum.g / PREVIEW_SEGMENTS_PER_TUBE,
+        b: accum.b / PREVIEW_SEGMENTS_PER_TUBE
       }, this.brightness);
     }
     return 0;
@@ -4177,50 +4196,93 @@ class WrenchPreviewRuntime {
     };
   }
 
+  sampleTubeLedPoint(tube, ledIndex) {
+    const idx = clampIndex(ledIndex, PREVIEW_SEGMENTS_PER_TUBE);
+    const u = PREVIEW_SEGMENTS_PER_TUBE <= 1 ? 0 : idx / (PREVIEW_SEGMENTS_PER_TUBE - 1);
+    return this.samplePoint(tube, u);
+  }
+
   sampleSceneAt(x, y, z) {
     let accum = { r: 0, g: 0, b: 0 };
+    let sumW = 0;
     for (const shape of this.shapes) {
       if (!shape) continue;
-      let falloff = 0;
+      let field = 0;
       if (shape.type === "sphere") {
         const dx = x - shape.x;
         const dy = y - shape.y;
         const dz = z - shape.z;
-        const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        falloff = Math.max(0, 1 - d / shape.r);
+        const d2 = dx * dx + dy * dy + dz * dz;
+        const r = Math.max(0.0001, shape.r);
+        field = Math.max(0, 1 - d2 / (r * r));
       } else if (shape.type === "box") {
-        const dx = Math.max(0, Math.abs(x - shape.x) - shape.w * 0.5);
-        const dy = Math.max(0, Math.abs(y - shape.y) - shape.h * 0.5);
-        const dz = Math.max(0, Math.abs(z - shape.z) - shape.d * 0.5);
-        const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        const edge = Math.max(4, Math.min(shape.w, shape.h, shape.d) * 0.45);
-        falloff = Math.max(0, 1 - d / edge);
+        const hx = Math.max(0.0001, shape.w * 0.5);
+        const hy = Math.max(0.0001, shape.h * 0.5);
+        const hz = Math.max(0.0001, shape.d * 0.5);
+        const fx = Math.abs(x - shape.x) / hx;
+        const fy = Math.abs(y - shape.y) / hy;
+        const fz = Math.abs(z - shape.z) / hz;
+        const f = Math.max(fx, fy, fz);
+        field = f >= 1 ? 0 : (1 - f);
       }
-      if (falloff <= 0) continue;
-      const c = this.pickShapeColor(shape, falloff);
-      const strength = falloff * Math.max(0.18, shape.alpha);
-      accum.r += c.r * strength;
-      accum.g += c.g * strength;
-      accum.b += c.b * strength;
+      field = previewApplyBiasPower(field, shape.bias, shape.power);
+      if (field <= 0) continue;
+      const weight = Math.max(0, (Number(shape.alpha) || 0) * field);
+      if (weight <= 0) continue;
+      const c = this.pickShapeColor(shape, x, y, z, field);
+      sumW += weight;
+      accum.r += c.r * weight;
+      accum.g += c.g * weight;
+      accum.b += c.b * weight;
     }
+    if (sumW <= 0) {
+      return { r: 0, g: 0, b: 0 };
+    }
+    const coverage = Math.max(0, Math.min(1, sumW));
+    const avg = {
+      r: accum.r / sumW,
+      g: accum.g / sumW,
+      b: accum.b / sumW
+    };
     return {
-      r: Math.min(255, accum.r),
-      g: Math.min(255, accum.g),
-      b: Math.min(255, accum.b)
+      r: Math.min(255, avg.r * coverage),
+      g: Math.min(255, avg.g * coverage),
+      b: Math.min(255, avg.b * coverage)
     };
   }
 
-  pickShapeColor(shape, falloff) {
-    if (shape.paletteId === null || typeof shape.paletteId === "undefined" || !this.palettes[shape.paletteId]) {
+  pickShapeColor(shape, x, y, z, falloff) {
+    const pal = shape.dynamicPalette || this.palettes[shape.paletteId];
+    if (!pal) {
       return shape.color;
     }
-    const pal = this.palettes[shape.paletteId];
-    const scroll = ((shape.paletteScroll || 0) + this.lastTexTimeMs * 0.001) * 0.01;
-    const idxF = ((1 - falloff) * 2 + scroll) % 3;
-    const idx0 = Math.max(0, Math.min(2, Math.floor((idxF + 3) % 3)));
-    const idx1 = (idx0 + 1) % 3;
-    const frac = ((idxF % 1) + 1) % 1;
-    const palColor = mixRgb(pal[idx0], pal[idx1], frac);
+    const scrollNorm = (((shape.paletteScroll || 0) / 255) * (this.lastTexTimeMs * 0.001) * 0.35) % 1;
+    let idxNorm = 1 - Math.max(0, Math.min(1, falloff));
+    if (shape.type === "sphere") {
+      const dx = x - shape.x;
+      const dy = y - shape.y;
+      const dz = z - shape.z;
+      const r = Math.max(0.0001, shape.r);
+      idxNorm = Math.max(0, Math.min(1, (dx * dx + dy * dy + dz * dz) / (r * r)));
+    } else if (shape.type === "box") {
+      const hx = Math.max(0.0001, shape.w * 0.5);
+      const hy = Math.max(0.0001, shape.h * 0.5);
+      const hz = Math.max(0.0001, shape.d * 0.5);
+      idxNorm = Math.max(
+        Math.abs(x - shape.x) / hx,
+        Math.abs(y - shape.y) / hy,
+        Math.abs(z - shape.z) / hz
+      );
+      idxNorm = Math.max(0, Math.min(1, idxNorm));
+    }
+    idxNorm = (idxNorm + scrollNorm) % 1;
+    const mid = Math.max(0.0001, Math.min(0.9999, shape.dynamicPaletteMid || (115 / 255)));
+    let palColor;
+    if (idxNorm <= mid) {
+      palColor = mixRgb(pal[0], pal[1], idxNorm / mid);
+    } else {
+      palColor = mixRgb(pal[1], pal[2], (idxNorm - mid) / (1 - mid));
+    }
     const mixAmt = normalizePreviewPaletteScalar(shape.paletteMix, 0);
     const bright = normalizePreviewPaletteScalar(shape.paletteBright, 1);
     const blend = normalizePreviewPaletteScalar(shape.paletteBlend, 1);
@@ -4242,16 +4304,8 @@ class WrenchPreviewRuntime {
     for (let tube = 0; tube < 6; tube++) {
       const row = [];
       for (let s = 0; s < segmentsPerTube; s++) {
-        const u0 = s / segmentsPerTube;
-        const u1 = (s + 1) / segmentsPerTube;
-        const c0 = this.sampleSceneAtTube(tube, u0 + (u1 - u0) * 0.25);
-        const c1 = this.sampleSceneAtTube(tube, u0 + (u1 - u0) * 0.75);
-        const baseColor = {
-          r: (c0.r + c1.r) * 0.5,
-          g: (c0.g + c1.g) * 0.5,
-          b: (c0.b + c1.b) * 0.5
-        };
-        const directColor = this.sampleDirectTubeSegment(tube, u0, u1);
+        const baseColor = this.sampleSceneAtTubeLed(tube, s);
+        const directColor = this.sampleDirectTubeLed(tube, s);
         row.push(
           rgbToHex(
             applyBrightness(
@@ -4272,6 +4326,11 @@ class WrenchPreviewRuntime {
 
   sampleSceneAtTube(tube, u) {
     const p = this.samplePoint(tube, u);
+    return this.sampleSceneAt(p.x, p.y, p.z);
+  }
+
+  sampleSceneAtTubeLed(tube, ledIndex) {
+    const p = this.sampleTubeLedPoint(tube, ledIndex);
     return this.sampleSceneAt(p.x, p.y, p.z);
   }
 
@@ -4302,6 +4361,16 @@ class WrenchPreviewRuntime {
       r: Math.max(sumR / count, maxR * 0.65),
       g: Math.max(sumG / count, maxG * 0.65),
       b: Math.max(sumB / count, maxB * 0.65)
+    };
+  }
+
+  sampleDirectTubeLed(tube, ledIndex) {
+    const idx = clampIndex(ledIndex, PREVIEW_SEGMENTS_PER_TUBE);
+    const c = this.directPixels[tube * 892 + idx] || { r: 0, g: 0, b: 0 };
+    return {
+      r: c.r || 0,
+      g: c.g || 0,
+      b: c.b || 0
     };
   }
 }
@@ -4382,6 +4451,18 @@ function normalizePreviewPaletteScalar(value, defaultValue) {
   if (Number.isNaN(n)) return defaultValue;
   if (n <= 1.4) return Math.max(0, n);
   return Math.max(0, n / 255);
+}
+
+function previewApplyBiasPower(t, bias, power) {
+  let x = Math.max(0, Math.min(1, Number(t) || 0));
+  const b = Math.max(0.01, Math.min(0.99, typeof bias === "undefined" ? 0.5 : Number(bias) || 0.5));
+  const p = Math.max(1, Math.min(8, Math.round(typeof power === "undefined" ? 4 : Number(power) || 4)));
+  const k = (1 / b) - 2;
+  const denom = (k * (1 - x)) + 1;
+  x = denom <= 0 ? 1 : (x / denom);
+  let out = x;
+  for (let i = 1; i < p; i++) out *= x;
+  return Math.max(0, Math.min(1, out));
 }
 
 function applyBrightness(color, brightness) {

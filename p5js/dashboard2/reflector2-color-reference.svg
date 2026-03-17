@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900">
+  <rect width="1400" height="900" fill="#0f1115"/>
+
+  <defs>
+    <linearGradient id="sleep-bg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#5f3a00"/>
+      <stop offset="45%" stop-color="#ffbe4d"/>
+      <stop offset="100%" stop-color="#fff1c8"/>
+    </linearGradient>
+    <linearGradient id="heart-grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#541100"/>
+      <stop offset="55%" stop-color="#ff4a19"/>
+      <stop offset="100%" stop-color="#ffd17d"/>
+    </linearGradient>
+    <linearGradient id="bruise-grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#3e8dff"/>
+      <stop offset="55%" stop-color="#4db6ff"/>
+      <stop offset="100%" stop-color="#7fe7ff"/>
+    </linearGradient>
+    <linearGradient id="smoke-grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#3a2f00"/>
+      <stop offset="55%" stop-color="#c8a03b"/>
+      <stop offset="100%" stop-color="#ffe7a1"/>
+    </linearGradient>
+    <filter id="blur24"><feGaussianBlur stdDeviation="24"/></filter>
+    <filter id="blur40"><feGaussianBlur stdDeviation="40"/></filter>
+  </defs>
+
+  <text x="64" y="78" fill="#f5f0e8" font-size="34" font-family="Georgia, 'Times New Roman', serif">
+    Reflector2 Color Reference From Wrench Code
+  </text>
+  <text x="64" y="112" fill="#9ea7b3" font-size="18" font-family="IBM Plex Sans, Arial, sans-serif">
+    Reference image only. Built from the sketch's explicit HSV colors and named palette influences, not an exact LED render.
+  </text>
+
+  <rect x="56" y="150" width="1288" height="300" rx="22" fill="#151922" stroke="#2b3140"/>
+  <text x="84" y="198" fill="#f5f0e8" font-size="26" font-family="IBM Plex Sans, Arial, sans-serif">Sleep Mode</text>
+  <text x="84" y="228" fill="#9ea7b3" font-size="18" font-family="IBM Plex Sans, Arial, sans-serif">Hue 38 / Sat 170 / Val 255 drifting amber orbs</text>
+
+  <circle cx="240" cy="330" r="88" fill="#ffb547" opacity="0.28" filter="url(#blur24)"/>
+  <circle cx="240" cy="330" r="54" fill="#ffc45e"/>
+  <circle cx="430" cy="320" r="112" fill="#ffcf7d" opacity="0.25" filter="url(#blur24)"/>
+  <circle cx="430" cy="320" r="72" fill="#ffcf7d"/>
+  <circle cx="650" cy="334" r="140" fill="#ffe0a9" opacity="0.22" filter="url(#blur40)"/>
+  <circle cx="650" cy="334" r="92" fill="#ffe0a9"/>
+
+  <rect x="900" y="250" width="360" height="44" rx="12" fill="url(#sleep-bg)"/>
+  <text x="900" y="238" fill="#d4dae3" font-size="16" font-family="IBM Plex Sans, Arial, sans-serif">Main sleep palette feel</text>
+  <text x="900" y="325" fill="#d4dae3" font-size="16" font-family="IBM Plex Sans, Arial, sans-serif">Approx swatches</text>
+  <rect x="900" y="344" width="64" height="64" rx="12" fill="#5f3a00"/>
+  <rect x="980" y="344" width="64" height="64" rx="12" fill="#ffbe4d"/>
+  <rect x="1060" y="344" width="64" height="64" rx="12" fill="#ffd985"/>
+  <rect x="1140" y="344" width="64" height="64" rx="12" fill="#fff1c8"/>
+
+  <rect x="56" y="486" width="1288" height="356" rx="22" fill="#151922" stroke="#2b3140"/>
+  <text x="84" y="534" fill="#f5f0e8" font-size="26" font-family="IBM Plex Sans, Arial, sans-serif">Reflection Mode</text>
+  <text x="84" y="564" fill="#9ea7b3" font-size="18" font-family="IBM Plex Sans, Arial, sans-serif">Warm red heart, cool bruise slabs, pale smoke, amber base sphere, plus built-in palettes 5 / 1 / 2 / 6 / 0</text>
+
+  <text x="92" y="622" fill="#d4dae3" font-size="16" font-family="IBM Plex Sans, Arial, sans-serif">Heart sphere</text>
+  <rect x="92" y="636" width="260" height="36" rx="12" fill="url(#heart-grad)"/>
+  <text x="92" y="704" fill="#d4dae3" font-size="16" font-family="IBM Plex Sans, Arial, sans-serif">Bruise slabs</text>
+  <rect x="92" y="718" width="260" height="36" rx="12" fill="url(#bruise-grad)"/>
+
+  <text x="430" y="622" fill="#d4dae3" font-size="16" font-family="IBM Plex Sans, Arial, sans-serif">Smoke / cool haze</text>
+  <rect x="430" y="636" width="260" height="36" rx="12" fill="#b2c6e6"/>
+  <text x="430" y="704" fill="#d4dae3" font-size="16" font-family="IBM Plex Sans, Arial, sans-serif">Base amber sphere</text>
+  <rect x="430" y="718" width="260" height="36" rx="12" fill="url(#smoke-grad)"/>
+
+  <text x="768" y="622" fill="#d4dae3" font-size="16" font-family="IBM Plex Sans, Arial, sans-serif">Built-in palette influence</text>
+  <rect x="768" y="636" width="90" height="36" rx="12" fill="#ff7a30"/>
+  <rect x="868" y="636" width="90" height="36" rx="12" fill="#ffbe4d"/>
+  <rect x="968" y="636" width="90" height="36" rx="12" fill="#67d6ff"/>
+  <rect x="1068" y="636" width="90" height="36" rx="12" fill="#e7c16b"/>
+  <rect x="1168" y="636" width="90" height="36" rx="12" fill="#ff3d3d"/>
+  <text x="768" y="694" fill="#9ea7b3" font-size="14" font-family="IBM Plex Sans, Arial, sans-serif">5 Heat</text>
+  <text x="868" y="694" fill="#9ea7b3" font-size="14" font-family="IBM Plex Sans, Arial, sans-serif">1 Lava</text>
+  <text x="968" y="694" fill="#9ea7b3" font-size="14" font-family="IBM Plex Sans, Arial, sans-serif">2 Ocean</text>
+  <text x="1068" y="694" fill="#9ea7b3" font-size="14" font-family="IBM Plex Sans, Arial, sans-serif">6 GoldenDecay</text>
+  <text x="1168" y="694" fill="#9ea7b3" font-size="14" font-family="IBM Plex Sans, Arial, sans-serif">0 Rainbow</text>
+
+  <circle cx="930" cy="760" r="58" fill="#ff622e" opacity="0.35" filter="url(#blur24)"/>
+  <circle cx="930" cy="760" r="32" fill="#ff4a19"/>
+  <rect x="1006" y="730" width="170" height="42" rx="16" fill="#61bcff" opacity="0.92"/>
+  <rect x="1128" y="708" width="92" height="104" rx="18" fill="#b2c6e6" opacity="0.72"/>
+  <circle cx="1260" cy="770" r="44" fill="#ffc645" opacity="0.90"/>
+</svg>

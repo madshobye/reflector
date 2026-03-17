@@ -46,7 +46,7 @@ static int g_lastShapeIndex = -1;  // "current sphere" convenience
 // Forward declarations for external things you already have
 // ------------------------------------------------------------
 // FastLED types
-// (Assumes CRGB, CHSV, hsv2rgb_rainbow, clampi, clampf exist in your project)
+// (Assumes CRGB, CHSV, clampi, clampf exist in your project)
 /*#ifndef clampi
 static inline int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 #endif
@@ -56,6 +56,45 @@ static inline float clampf(float v, float lo, float hi) { return v < lo ? lo : (
 */
 static inline float fLen3(float x, float y, float z) {
   return sqrtf(x * x + y * y + z * z);
+}
+
+static inline void hsv2rgb_standard(const CHSV& hsv, CRGB& out) {
+  const float h = ((float)hsv.h / 255.0f) * 360.0f;
+  const float s = (float)hsv.s / 255.0f;
+  const float v = (float)hsv.v / 255.0f;
+
+  const float c = v * s;
+  const float hh = h / 60.0f;
+  const float x = c * (1.0f - fabsf(fmodf(hh, 2.0f) - 1.0f));
+  const float m = v - c;
+
+  float r = 0.0f;
+  float g = 0.0f;
+  float b = 0.0f;
+
+  if (hh < 1.0f) {
+    r = c;
+    g = x;
+  } else if (hh < 2.0f) {
+    r = x;
+    g = c;
+  } else if (hh < 3.0f) {
+    g = c;
+    b = x;
+  } else if (hh < 4.0f) {
+    g = x;
+    b = c;
+  } else if (hh < 5.0f) {
+    r = x;
+    b = c;
+  } else {
+    r = c;
+    b = x;
+  }
+
+  out.r = (uint8_t)clampi((int)lroundf((r + m) * 255.0f), 0, 255);
+  out.g = (uint8_t)clampi((int)lroundf((g + m) * 255.0f), 0, 255);
+  out.b = (uint8_t)clampi((int)lroundf((b + m) * 255.0f), 0, 255);
 }
 
 // Your globals (existing in your project)
@@ -97,6 +136,28 @@ static constexpr int MAX_SHAPES = 256;  // must match sdfSetCount clamp
 // ------------------------------------------------------------
 static constexpr uint8_t SDF_SPHERE = 0;
 static constexpr uint8_t SDF_BOX = 1;
+
+// ------------------------------------------------------------
+// Blend strategies for overlapping SDF shapes
+// ------------------------------------------------------------
+// ADDITIVE:
+//   Light-like emission. Overlaps get brighter and more vivid.
+// WEIGHTED:
+//   Weighted color average with coverage restoration. Softer/pastel.
+// PAINT:
+//   Fast front-to-back "over" compositing. More opaque/pigment-like.
+//
+// Switch here at compile time:
+//   - SDF_BLEND_ADDITIVE
+//   - SDF_BLEND_WEIGHTED
+//   - SDF_BLEND_PAINT
+static constexpr uint8_t SDF_BLEND_ADDITIVE = 0;
+static constexpr uint8_t SDF_BLEND_WEIGHTED = 1;
+static constexpr uint8_t SDF_BLEND_PAINT = 2;
+
+#ifndef SDF_BLEND_MODE
+#define SDF_BLEND_MODE SDF_BLEND_ADDITIVE
+#endif
 
 // ------------------------------------------------------------
 // Texture patterns (10)
@@ -618,7 +679,7 @@ static void sdfSetShape(int i,
   uint8_t S = (uint8_t)clampi(sat, 0, 255);
   uint8_t V = (uint8_t)clampi(val, 0, 255);
   CHSV hsv(H, S, V);
-  hsv2rgb_rainbow(hsv, s.rgb);
+  hsv2rgb_standard(hsv, s.rgb);
 
   s.alphaQ8 = alphaToQ8(alpha);
   s.biasQ16 = biasToQ16(bias);
@@ -782,7 +843,7 @@ static inline CRGB sdfSampleAtU_list(const IVec3S16& p,
                                      uint16_t idxCount) {
   if (idxCount == 0) return CRGB::Black;
 
-  int32_t accumR = 0, accumG = 0, accumB = 0;
+  int64_t accumR = 0, accumG = 0, accumB = 0;
 
   const int32_t px = (int32_t)p.x;
   const int32_t py = (int32_t)p.y;
@@ -949,7 +1010,15 @@ static inline CRGB sdfSampleAtU_list(const IVec3S16& p,
                                      uint16_t idxCount) {
   if (idxCount == 0) return CRGB::Black;
 
-  int32_t accumR = 0, accumG = 0, accumB = 0;
+  int64_t accumR = 0, accumG = 0, accumB = 0;
+#if SDF_BLEND_MODE == SDF_BLEND_WEIGHTED
+  int32_t sumW = 0;
+#elif SDF_BLEND_MODE == SDF_BLEND_PAINT
+  int32_t outR_Q16 = 0;
+  int32_t outG_Q16 = 0;
+  int32_t outB_Q16 = 0;
+  int32_t covQ16 = 0;
+#endif
 
   const int32_t px = (int32_t)p.x;
   const int32_t py = (int32_t)p.y;
@@ -1021,16 +1090,57 @@ static inline CRGB sdfSampleAtU_list(const IVec3S16& p,
       base.b = (uint8_t)((base.b * inv + palC.b * palMix) >> 8);
     }
 
-    // then accumulate using base instead of s.rgb
-    accumR += (base.r * wQ16) >> Q;
-    accumG += (base.g * wQ16) >> Q;
-    accumB += (base.b * wQ16) >> Q;
+#if SDF_BLEND_MODE == SDF_BLEND_ADDITIVE
+    accumR += ((int64_t)base.r * (int64_t)wQ16) >> Q;
+    accumG += ((int64_t)base.g * (int64_t)wQ16) >> Q;
+    accumB += ((int64_t)base.b * (int64_t)wQ16) >> Q;
+#elif SDF_BLEND_MODE == SDF_BLEND_WEIGHTED
+    sumW += wQ16;
+    accumR += (int64_t)base.r * (int64_t)wQ16;
+    accumG += (int64_t)base.g * (int64_t)wQ16;
+    accumB += (int64_t)base.b * (int64_t)wQ16;
+#elif SDF_BLEND_MODE == SDF_BLEND_PAINT
+    // Fast pigment-like compositing. Shape order matters.
+    int32_t aQ16 = wQ16;
+    if (aQ16 < 0) aQ16 = 0;
+    if (aQ16 > ONE_Q) aQ16 = ONE_Q;
+    const int32_t invCovQ16 = ONE_Q - covQ16;
+    const int32_t layerQ16 = q16_mul(aQ16, invCovQ16);
+    outR_Q16 += base.r * layerQ16;
+    outG_Q16 += base.g * layerQ16;
+    outB_Q16 += base.b * layerQ16;
+    covQ16 += layerQ16;
+    if (covQ16 > ONE_Q) covQ16 = ONE_Q;
+#endif
   }
 
+#if SDF_BLEND_MODE == SDF_BLEND_ADDITIVE
   return CRGB(
-    (uint8_t)clampi(accumR, 0, 255),
-    (uint8_t)clampi(accumG, 0, 255),
-    (uint8_t)clampi(accumB, 0, 255));
+    (uint8_t)clampi((int32_t)accumR, 0, 255),
+    (uint8_t)clampi((int32_t)accumG, 0, 255),
+    (uint8_t)clampi((int32_t)accumB, 0, 255));
+#elif SDF_BLEND_MODE == SDF_BLEND_WEIGHTED
+  if (sumW <= 0) return CRGB::Black;
+
+  const uint32_t invSumW_Q32 = recip_u32_Q32(sumW);
+  const int32_t avgR = (int32_t)(((uint64_t)accumR * (uint64_t)invSumW_Q32) >> 32);
+  const int32_t avgG = (int32_t)(((uint64_t)accumG * (uint64_t)invSumW_Q32) >> 32);
+  const int32_t avgB = (int32_t)(((uint64_t)accumB * (uint64_t)invSumW_Q32) >> 32);
+
+  int32_t intenQ16 = sumW;
+  if (intenQ16 < 0) intenQ16 = 0;
+  if (intenQ16 > ONE_Q) intenQ16 = ONE_Q;
+
+  return CRGB(
+    (uint8_t)clampi((int32_t)(((int64_t)avgR * (int64_t)intenQ16) >> Q), 0, 255),
+    (uint8_t)clampi((int32_t)(((int64_t)avgG * (int64_t)intenQ16) >> Q), 0, 255),
+    (uint8_t)clampi((int32_t)(((int64_t)avgB * (int64_t)intenQ16) >> Q), 0, 255));
+#else
+  return CRGB(
+    (uint8_t)clampi((outR_Q16 >> Q), 0, 255),
+    (uint8_t)clampi((outG_Q16 >> Q), 0, 255),
+    (uint8_t)clampi((outB_Q16 >> Q), 0, 255));
+#endif
 }
 
 
@@ -1152,7 +1262,7 @@ static void sdfSetPaletteRGB3(int i,
   s.palBlend = (uint8_t)(blend ? 1 : 0);
 }
 
-// HSV version (uses FastLED hsv2rgb_rainbow for nice saturation)
+// HSV version (uses standard HSV conversion)
 static void sdfSetPaletteHSV3(int i,
                               uint8_t h0, uint8_t s0, uint8_t v0,
                               uint8_t h1, uint8_t s1, uint8_t v1,
@@ -1162,9 +1272,9 @@ static void sdfSetPaletteHSV3(int i,
   if (i < 0 || i >= g_shapeCount) return;
 
   CRGB c0, c1, c2;
-  hsv2rgb_rainbow(CHSV(h0, s0, v0), c0);
-  hsv2rgb_rainbow(CHSV(h1, s1, v1), c1);
-  hsv2rgb_rainbow(CHSV(h2, s2, v2), c2);
+  hsv2rgb_standard(CHSV(h0, s0, v0), c0);
+  hsv2rgb_standard(CHSV(h1, s1, v1), c1);
+  hsv2rgb_standard(CHSV(h2, s2, v2), c2);
 
   sdfSetPaletteRGB3(i,
                     c0.r, c0.g, c0.b,
@@ -1253,7 +1363,7 @@ static void sdfSetPaletteHSV_N(int i,
   if (n > 8) n = 8;
 
   for (uint8_t k = 0; k < n; k++) {
-    hsv2rgb_rainbow(hsvs[k], cols[k]);
+    hsv2rgb_standard(hsvs[k], cols[k]);
   }
 
   sdfSetPaletteRGB_N(i, cols, n, mix, scroll, bright, blend);
