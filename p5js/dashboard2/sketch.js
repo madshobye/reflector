@@ -6,20 +6,23 @@ const GPT_MODEL_KEY = "dashboard2_gpt_model";
 const GPT_TEMPERATURE_KEY = "dashboard2_gpt_temperature";
 const GPT_TEMPERATURE_OPTIONS = [0.2, 0.4, 0.6, 0.8, 1.0, 1.2];
 const GPT_MODEL_OPTIONS = [
-  "gpt-5.1-codex",
-  "gpt-5.2-codex",
-  "gpt-5.1",
+  "gpt-5.4",
+  "gpt-5.4-pro",
+  "gpt-5.4-nano",
+  "gpt-5.4-mini",
+  "gpt-5.3-codex",
+  "gpt-5.3",
   "gpt-5.2",
-  "gpt-5.1-mini",
-  "gpt-5-codex"
+  "gpt-5",
+  "gpt-5-mini"
 ];
-const DEFAULT_GPT_MODEL = "gpt-5.1-codex";
+const DEFAULT_GPT_MODEL = "gpt-5.4";
 const ORBIT_STORAGE_VERSION = "v2";
 const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v92";
+const DASHBOARD2_VERSION = "v95";
 const TOTAL_NEWS_ITEMS = 20;
 const RSS_CACHE_TTL_MS = 20 * 60 * 1000;
 const DOC_MD_URL =
@@ -4379,8 +4382,46 @@ function translateWrenchToJs(src) {
   let out = String(src || "");
   out = out.replace(/\bvar\s+([A-Za-z_]\w*)\[\]\s*;/g, "var $1 = [];");
   out = out.replace(/math::/g, "math.");
-  out = out.replace(/\(int\)\s*\(([^)]+)\)/g, "int($1)");
-  out = out.replace(/\(int\)\s*([A-Za-z_][\w.]*)/g, "int($1)");
+  return rewriteWrenchIntCasts(out);
+}
+
+function rewriteWrenchIntCasts(src) {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    if (src.startsWith("(int)", i)) {
+      i += 5;
+      while (i < src.length && /\s/.test(src[i])) i += 1;
+      if (i >= src.length) {
+        out += "int";
+        break;
+      }
+
+      if (src[i] === "(") {
+        let depth = 1;
+        let j = i + 1;
+        while (j < src.length && depth > 0) {
+          if (src[j] === "(") depth += 1;
+          else if (src[j] === ")") depth -= 1;
+          j += 1;
+        }
+        if (depth === 0) {
+          out += "int(" + src.slice(i + 1, j - 1) + ")";
+          i = j;
+          continue;
+        }
+      }
+
+      let j = i;
+      while (j < src.length && !/[\s;,+\-*/%<>=!&|^?:)\]}]/.test(src[j])) j += 1;
+      out += "int(" + src.slice(i, j) + ")";
+      i = j;
+      continue;
+    }
+
+    out += src[i];
+    i += 1;
+  }
   return out;
 }
 
