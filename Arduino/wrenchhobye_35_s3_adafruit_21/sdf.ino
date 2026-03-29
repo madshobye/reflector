@@ -156,8 +156,10 @@ static constexpr uint8_t SDF_BLEND_WEIGHTED = 1;
 static constexpr uint8_t SDF_BLEND_PAINT = 2;
 
 #ifndef SDF_BLEND_MODE
-#define SDF_BLEND_MODE SDF_BLEND_ADDITIVE
+#define SDF_BLEND_MODE SDF_BLEND_PAINT
 #endif
+
+// SDF_BLEND_ADDITIVE SDF_BLEND_WEIGHTED SDF_BLEND_PAINT
 
 // ------------------------------------------------------------
 // Texture patterns (10)

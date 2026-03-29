@@ -4380,6 +4380,7 @@ function translateWrenchToJs(src) {
   out = out.replace(/\bvar\s+([A-Za-z_]\w*)\[\]\s*;/g, "var $1 = [];");
   out = out.replace(/math::/g, "math.");
   out = out.replace(/\(int\)\s*\(([^)]+)\)/g, "int($1)");
+  out = out.replace(/\(int\)\s*([A-Za-z_][\w.]*)/g, "int($1)");
   return out;
 }
 
