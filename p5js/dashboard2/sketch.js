@@ -1,6 +1,6 @@
 window.showOverlay = false;
 
-const AUTOMATION_INTERVAL_OPTIONS_MINUTES = [0, 5, 15, 30, 60, 120, 240, 360, 600];
+const AUTOMATION_INTERVAL_OPTIONS_MINUTES = [0, 0.5, 1, 5, 15, 30, 60, 120, 240, 360, 600];
 const AUTOMATION_INTERVAL_KEY = "dashboard2_automation_interval_minutes";
 const GPT_MODEL_KEY = "dashboard2_gpt_model";
 const GPT_TEMPERATURE_KEY = "dashboard2_gpt_temperature";
@@ -22,9 +22,11 @@ const PYR_ID_KEY = "dashboard2_pyr_id";
 const PYR_ID_OPTIONS = ["reflector1", "reflector2", "reflector3", "reflector4", "reflector5"];
 const MQTT_READONLY_TOKEN = "XDyuEJgC9Q7veMrn";
 const CONSOLE_MAX_LINES = 1000;
-const DASHBOARD2_VERSION = "v95";
+const DASHBOARD2_VERSION = "v102";
 const TOTAL_NEWS_ITEMS = 20;
 const RSS_CACHE_TTL_MS = 20 * 60 * 1000;
+const DOC_FETCH_TIMEOUT_MS = 30000;
+const OPENAI_GENERATE_TIMEOUT_MS = 120000;
 const DOC_MD_URL =
   "https://docs.google.com/document/d/1aYo8FZDIZpw3B1-zRs__Ug88DhGRpVDmBOQOfAKbLQU/export?format=md";
 
@@ -41,6 +43,7 @@ let automationWasRunningBeforeRemoteStop = false;
 let debugDownloadsEnabled = false;
 let generationInProgress = false;
 let lastPromptHistory = [];
+let lastChosenNewsTopic = "";
 let lastDescription = "";
 let lastDesignRationale = "";
 let lastLocation = "";
@@ -349,9 +352,7 @@ function createSidebarControls() {
   sidebarAutomationSelect.parent(wrap);
   sidebarAutomationSelect.class("sidebar-select");
   for (const mins of AUTOMATION_INTERVAL_OPTIONS_MINUTES) {
-    const label = mins >= 60
-      ? "Refresh: " + ((mins / 60) % 1 === 0 ? (mins / 60) : (mins / 60).toFixed(1)) + "h"
-      : "Refresh: " + mins + "m";
+    const label = automationIntervalLabel(mins);
     sidebarAutomationSelect.option(label, String(mins));
   }
   sidebarAutomationSelect.selected(String(automationIntervalMinutes));
@@ -362,7 +363,7 @@ function createSidebarControls() {
     logLine(
       automationIntervalMinutes === 0
         ? "Automation refresh set to 0 minutes (rerun immediately)."
-        : "Automation refresh set to " + automationIntervalMinutes + " minutes."
+        : "Automation refresh set to " + automationIntervalLabel(automationIntervalMinutes).replace("Refresh: ", "") + "."
     );
     if (automationEnabled) {
       scheduleNextAutomationRun();
@@ -538,12 +539,16 @@ function rebuildActionsDropdown() {
   sidebarActionSelect.selected("");
 }
 
-function automationIntervalLabel() {
-  if (automationIntervalMinutes >= 60) {
-    const hours = automationIntervalMinutes / 60;
+function automationIntervalLabel(minutes = automationIntervalMinutes) {
+  if (minutes === 0) return "Refresh: 0m";
+  if (minutes < 1) {
+    return "Refresh: " + Math.round(minutes * 60) + "s";
+  }
+  if (minutes >= 60) {
+    const hours = minutes / 60;
     return "Refresh: " + (Number.isInteger(hours) ? hours : hours.toFixed(1)) + "h";
   }
-  return "Refresh: " + automationIntervalMinutes + "m";
+  return "Refresh: " + minutes + "m";
 }
 
 function loadAutomationIntervalMinutes() {
@@ -568,7 +573,7 @@ function cycleAutomationInterval() {
   logLine(
     automationIntervalMinutes === 0
       ? "Automation refresh set to 0 minutes (rerun immediately)."
-      : "Automation refresh set to " + automationIntervalMinutes + " minutes."
+      : "Automation refresh set to " + automationIntervalLabel(automationIntervalMinutes).replace("Refresh: ", "") + "."
   );
   if (automationEnabled) {
     scheduleNextAutomationRun();
@@ -843,6 +848,7 @@ function resubscribeReflectorTopics(prevId, nextId) {
 
 function resetSelectedReflectorState() {
   lastPromptHistory = [];
+  lastChosenNewsTopic = "";
   lastDescription = "";
   lastDesignRationale = "";
   lastLocation = "";
@@ -863,15 +869,16 @@ function resetSelectedReflectorState() {
   renderMetrics();
 }
 
-function rememberPromptReflection(text) {
+function rememberPromptTopic(text) {
   const next = String(text || "").trim();
   if (!next) return;
   if (lastPromptHistory[0] === next) return;
   lastPromptHistory = [next, ...lastPromptHistory.filter((item) => item !== next)].slice(0, 20);
 }
 
-function lastPromptHistoryText() {
+function lastPromptHistoryText(limit = 20) {
   return lastPromptHistory
+    .slice(0, Math.max(0, limit))
     .map((item, index) => `${index + 1}. ${item}`)
     .join("\n\n");
 }
@@ -1468,9 +1475,9 @@ function connectMQTT() {
   const mqttToken = isAuthenticated ? mqttKey : MQTT_READONLY_TOKEN;
   client = mqtt.connect("wss://reflector:" + mqttToken + "@reflector.cloud.shiftr.io", {
     clientId,
-    keepalive: 20,
-    reconnectPeriod: 1000,
-    connectTimeout: 5000
+    keepalive: 60,
+    reconnectPeriod: 5000,
+    connectTimeout: 15000
   });
   const socket = client;
 
@@ -1483,6 +1490,15 @@ function connectMQTT() {
     subscribeReflectorTopics(selectedPyrId);
     if (isAuthenticated) {
       requestSelectedReflectorCode();
+    }
+    if (automationEnabled) {
+      if (generationInProgress) {
+        scheduleNextAutomationRun();
+        logLine("Automation resumed after MQTT reconnect.");
+      } else {
+        generateWrenchAndRun();
+        logLine("Automation resumed immediately after MQTT reconnect.");
+      }
     }
   });
 
@@ -1606,6 +1622,11 @@ function scheduleNextAutomationRun() {
       scheduleNextAutomationRun();
       return;
     }
+    if (generationInProgress) {
+      logLine("Automation skipped: generation still in progress. Rescheduling.");
+      scheduleNextAutomationRun();
+      return;
+    }
     generateWrenchAndRun();
   }, automationIntervalMs);
 }
@@ -1648,6 +1669,7 @@ function publishReflectionUpdate(reflection, code, designRationale, location) {
     reflection: reflection || "",
     design_rationale: designRationale || "",
     location: location || "",
+    chosen_news_topic: lastChosenNewsTopic || "",
     code: code || "",
     generated_at: new Date().toISOString(),
     dashboard_id: dashboardInstanceId
@@ -1665,6 +1687,7 @@ function publishCodeState(code, source, meta = {}) {
     reflection: meta.reflection || "",
     design_rationale: meta.design_rationale || "",
     location: meta.location || "",
+    chosen_news_topic: meta.chosen_news_topic || "",
     updated_at: new Date().toISOString(),
     dashboard_id: dashboardInstanceId
   });
@@ -1802,7 +1825,10 @@ function applyReflectionMessage(msg) {
       (typeof obj.description === "string" ? obj.description : "");
     if (typeof reflectionText === "string") {
       lastDescription = reflectionText;
-      rememberPromptReflection(reflectionText);
+      if (typeof obj.chosen_news_topic === "string") {
+        lastChosenNewsTopic = obj.chosen_news_topic;
+        rememberPromptTopic(obj.chosen_news_topic);
+      }
       lastDesignRationale = typeof obj.design_rationale === "string" ? obj.design_rationale : "";
       lastLocation = typeof obj.location === "string" ? obj.location : "";
       setReflectionPanelText();
@@ -1829,7 +1855,10 @@ function applyCodeStateMessage(msg) {
     lastCodeUpdateAt = Number.isFinite(updatedAt) ? updatedAt : Date.now();
     if (typeof obj.reflection === "string") {
       lastDescription = obj.reflection;
-      rememberPromptReflection(obj.reflection);
+    }
+    if (typeof obj.chosen_news_topic === "string") {
+      lastChosenNewsTopic = obj.chosen_news_topic;
+      rememberPromptTopic(obj.chosen_news_topic);
     }
     if (typeof obj.design_rationale === "string") {
       lastDesignRationale = obj.design_rationale;
@@ -1866,7 +1895,10 @@ function applyDashboardSyncMessage(msg) {
         (typeof obj.description === "string" ? obj.description : "");
       if (typeof reflectionText === "string" && reflectionText) {
         lastDescription = reflectionText;
-        rememberPromptReflection(reflectionText);
+        if (typeof obj.chosen_news_topic === "string") {
+          lastChosenNewsTopic = obj.chosen_news_topic;
+          rememberPromptTopic(obj.chosen_news_topic);
+        }
         lastDesignRationale = typeof obj.design_rationale === "string" ? obj.design_rationale : lastDesignRationale;
         lastLocation = typeof obj.location === "string" ? obj.location : lastLocation;
         setReflectionPanelText();
@@ -2027,13 +2059,15 @@ function cmdRunNow() {
   publishCodeState(code, "run_now", {
     reflection: lastDescription,
     design_rationale: lastDesignRationale,
-    location: lastLocation
+    location: lastLocation,
+    chosen_news_topic: lastChosenNewsTopic
   });
   publishDashboardSync("code_update", {
     code,
     reflection: lastDescription,
     design_rationale: lastDesignRationale,
-    location: lastLocation
+    location: lastLocation,
+    chosen_news_topic: lastChosenNewsTopic
   });
 }
 
@@ -2043,13 +2077,15 @@ function cmdSetCode() {
   publishCodeState(code, "set_code", {
     reflection: lastDescription,
     design_rationale: lastDesignRationale,
-    location: lastLocation
+    location: lastLocation,
+    chosen_news_topic: lastChosenNewsTopic
   });
   publishDashboardSync("code_update", {
     code,
     reflection: lastDescription,
     design_rationale: lastDesignRationale,
-    location: lastLocation
+    location: lastLocation,
+    chosen_news_topic: lastChosenNewsTopic
   });
 }
 
@@ -2059,13 +2095,15 @@ function cmdRunAndStore() {
   publishCodeState(code, "run_and_store", {
     reflection: lastDescription,
     design_rationale: lastDesignRationale,
-    location: lastLocation
+    location: lastLocation,
+    chosen_news_topic: lastChosenNewsTopic
   });
   publishDashboardSync("code_update", {
     code,
     reflection: lastDescription,
     design_rationale: lastDesignRationale,
-    location: lastLocation
+    location: lastLocation,
+    chosen_news_topic: lastChosenNewsTopic
   });
 }
 
@@ -2077,6 +2115,7 @@ function cmdReboot() {
 async function generateWrenchAndRun() {
   if (generationInProgress) {
     logLine("Generation already in progress.");
+    if (automationEnabled) scheduleNextAutomationRun();
     return;
   }
   if (!client || !isConnected) {
@@ -2093,17 +2132,18 @@ async function generateWrenchAndRun() {
   logLine("Fetching design doc (md)...");
 
   try {
-    const md = await fetchDocMarkdown();
+    const md = await withTimeout(fetchDocMarkdown(), DOC_FETCH_TIMEOUT_MS, "Doc fetch timed out.");
     maybeDownloadParsedPrompt(md);
     logLine("Doc fetched: " + md.length + " chars");
     logLine("GPT model: " + selectedGptModel);
     logLine("Calling OpenAI...");
-    const out = await openaiGenerateWrenchFromDoc(md);
+    const out = await withTimeout(openaiGenerateWrenchFromDoc(md), OPENAI_GENERATE_TIMEOUT_MS, "OpenAI generation timed out.");
     if (!out || !out.wrench_code) throw new Error("No wrench_code returned.");
 
     if (out.reflection) {
       lastDescription = out.reflection;
-      rememberPromptReflection(out.reflection);
+      lastChosenNewsTopic = out.chosen_news_topic || "";
+      rememberPromptTopic(lastChosenNewsTopic);
       lastDesignRationale = out.design_rationale || "";
       lastLocation = out.location || "";
       setReflectionPanelText();
@@ -2121,13 +2161,15 @@ async function generateWrenchAndRun() {
     publishCodeState(out.wrench_code, "generate", {
       reflection: out.reflection || "",
       design_rationale: out.design_rationale || "",
-      location: out.location || ""
+      location: out.location || "",
+      chosen_news_topic: out.chosen_news_topic || ""
     });
     publishDashboardSync("code_update", {
       code: out.wrench_code,
       reflection: out.reflection || "",
       design_rationale: out.design_rationale || "",
-      location: out.location || ""
+      location: out.location || "",
+      chosen_news_topic: out.chosen_news_topic || ""
     });
     logLine("Sent run_now with generated code (" + out.wrench_code.length + " chars).");
 
@@ -2153,12 +2195,39 @@ async function fetchDocMarkdown() {
   md = injectLastPromptIntoMarkdown(md);
   md = injectReflectorIdIntoMarkdown(md);
   md = injectCurrentTimeDateIntoMarkdown(md);
+  md = injectRandomParamsIntoMarkdown(md);
   const MAX_CHARS = 40000;
   if (md.length > MAX_CHARS) {
     logLine(`Prompt warning: capped at ${MAX_CHARS} chars (from ${md.length}).`);
     return md.slice(0, MAX_CHARS);
   }
   return md;
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(message));
+    }, timeoutMs);
+
+    Promise.resolve(promise).then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
 }
 
 async function testRssFeeds() {
@@ -2238,7 +2307,7 @@ async function testRssFeeds() {
 function injectLastPromptIntoMarkdown(md) {
   if (!md) return md;
   const placeholderRegex = /\\?\[last\\?_prompt\\?\]/i;
-  return md.replace(placeholderRegex, lastPromptHistoryText());
+  return md.replace(placeholderRegex, lastPromptHistoryText(3));
 }
 
 function injectReflectorIdIntoMarkdown(md) {
@@ -2251,6 +2320,17 @@ function injectCurrentTimeDateIntoMarkdown(md) {
   if (!md) return md;
   const placeholderRegex = /\\?\[current\\?_time\\?_date\\?\]/gi;
   return md.replace(placeholderRegex, currentTimeDateString());
+}
+
+function injectRandomParamsIntoMarkdown(md) {
+  if (!md) return md;
+  let out = md;
+  for (let i = 1; i <= 5; i++) {
+    const value = String(1 + Math.floor(Math.random() * 10));
+    const placeholderRegex = new RegExp(`\\\\?\\[param${i}\\\\?\\]`, "gi");
+    out = out.replace(placeholderRegex, value);
+  }
+  return out;
 }
 
 function currentTimeDateString() {
@@ -2573,10 +2653,11 @@ async function openaiGenerateWrenchFromDoc(docMd) {
           properties: {
             reflection: { type: "string" },
             design_rationale: { type: "string" },
+            chosen_news_topic: { type: "string" },
             location: { type: "string" },
             wrench_code: { type: "string" }
           },
-          required: ["reflection", "design_rationale", "location", "wrench_code"]
+          required: ["reflection", "design_rationale", "chosen_news_topic", "location", "wrench_code"]
         }
       }
     }
@@ -2611,8 +2692,9 @@ async function openaiGenerateWrenchFromDoc(docMd) {
           "Deliver:",
           "1) a short reflection on what you generated",
           "2) a short design rationale explaining the design choices",
-          "3) the location as a short string",
-          "4) the full Wrench code"
+          "3) the chosen news topic as a short string",
+          "4) the location as a short string",
+          "5) the full Wrench code"
         ].join("\n")
       }
     ],

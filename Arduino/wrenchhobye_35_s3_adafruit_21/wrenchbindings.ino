@@ -1,6 +1,9 @@
 static volatile uint32_t g_renderClaimMs = 0;
 static volatile uint32_t g_lastFrameNotifyMs = 0;
 static int g_nextSphereIdx = 0;
+// Wrench tube geometry direction override.
+// These flips affect tube_lerp/tube_xyz/tube_endpoints only, not physical LED layout.
+static bool g_wrenchTubeFlip[6] = { false, false, true, false, true, false };
 // warn-once flags (forward declaration)
 static bool g_warn_leds_set_pixel_striplen = false;
 static bool g_warn_leds_get_pixel_striplen = false;
@@ -1329,6 +1332,7 @@ static void w_tube_lerp(WRContext*, const WRValue* argv, const int argn, WRValue
 
   if (t < 0.0f) t = 0.0f;
   if (t > 1.0f) t = 1.0f;
+  if (g_wrenchTubeFlip[tube]) t = 1.0f - t;
 
   float a = g_tubeA_cm[tube][which];
   float b = g_tubeB_cm[tube][which];
@@ -1358,6 +1362,7 @@ static void w_tube_xyz(WRContext* c, const WRValue* argv, const int argn, WRValu
 
   if (t < 0.0f) t = 0.0f;
   if (t > 1.0f) t = 1.0f;
+  if (g_wrenchTubeFlip[tube]) t = 1.0f - t;
 
   float x = g_tubeA_cm[tube][0] + (g_tubeB_cm[tube][0] - g_tubeA_cm[tube][0]) * t;
   float y = g_tubeA_cm[tube][1] + (g_tubeB_cm[tube][1] - g_tubeA_cm[tube][1]) * t;
@@ -1414,6 +1419,7 @@ static void w_tube_xyz_out(WRContext*, const WRValue* argv, const int argn, WRVa
   }
   if (t < 0.0f) t = 0.0f;
   if (t > 1.0f) t = 1.0f;
+  if (g_wrenchTubeFlip[tube]) t = 1.0f - t;
 
   float x = g_tubeA_cm[tube][0] + (g_tubeB_cm[tube][0] - g_tubeA_cm[tube][0]) * t;
   float y = g_tubeA_cm[tube][1] + (g_tubeB_cm[tube][1] - g_tubeA_cm[tube][1]) * t;
@@ -1439,14 +1445,16 @@ static void w_tube_endpoints_out(WRContext*, const WRValue* argv, const int argn
     retInt(retVal, 0);
     return;
   }
+  const float* a = g_wrenchTubeFlip[t] ? g_tubeB_cm[t] : g_tubeA_cm[t];
+  const float* b = g_wrenchTubeFlip[t] ? g_tubeA_cm[t] : g_tubeB_cm[t];
   WRValue& outA = const_cast<WRValue&>(argv[1]);
   WRValue& outB = const_cast<WRValue&>(argv[2]);
-  structSetFloat(outA, "x", g_tubeA_cm[t][0]);
-  structSetFloat(outA, "y", g_tubeA_cm[t][1]);
-  structSetFloat(outA, "z", g_tubeA_cm[t][2]);
-  structSetFloat(outB, "x", g_tubeB_cm[t][0]);
-  structSetFloat(outB, "y", g_tubeB_cm[t][1]);
-  structSetFloat(outB, "z", g_tubeB_cm[t][2]);
+  structSetFloat(outA, "x", a[0]);
+  structSetFloat(outA, "y", a[1]);
+  structSetFloat(outA, "z", a[2]);
+  structSetFloat(outB, "x", b[0]);
+  structSetFloat(outB, "y", b[1]);
+  structSetFloat(outB, "z", b[2]);
   retInt(retVal, 1);
 }
 // ============================================================

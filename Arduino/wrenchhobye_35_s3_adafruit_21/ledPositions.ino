@@ -267,9 +267,9 @@ static void initAllLedPositionsU() {
                   ox, oy, oz, tx, ty, tz);
 
 
-// pusher street reflector one tube 4 flip // fablab 2 flip
+// 4 flip in pusher street // fablab 2 flip
 
-    if (s == 4 ) { float tmp;
+   if (s == 4 ) { float tmp;
       tmp=ox; ox=tx; tx=tmp;
       tmp=oy; oy=ty; ty=tmp;
       tmp=oz; oz=tz; tz=tmp;
